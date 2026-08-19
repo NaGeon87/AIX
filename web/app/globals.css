@@ -1,0 +1,177 @@
+@import "tailwindcss";
+
+/* Figma 파일 "남도 색상" 컬렉션과 같은 값. 한쪽만 고치면 어긋난다. */
+@theme {
+  --color-canvas: #f2ece1;
+  --color-surface: #ffffff;
+  --color-surface-alt: #faf5ec;
+  --color-ink: #1c1815;
+  --color-ink-soft: #2a2521;
+
+  --color-fg: #1c1815;
+  --color-fg-muted: #6b6259;
+  --color-fg-inverse: #fbf8f3;
+
+  --color-line: #e4daca;
+  --color-line-strong: #d5c8b2;
+
+  --color-brand: #b23a22;
+  --color-brand-soft: #f6e4de;
+  --color-accent: #1f5f52;
+  --color-accent-soft: #ddeae5;
+
+  --color-spicy: #c4392a;
+  --color-salty: #2e6e8e;
+  --color-soup: #c8862b;
+  --color-texture: #6b4a8f;
+  --color-aroma: #3e7a3a;
+
+  --font-display: "Noto Serif KR", "Nanum Myeongjo", Georgia, serif;
+  --font-sans: "Pretendard", "Noto Sans KR", "Apple SD Gothic Neo", system-ui, sans-serif;
+}
+
+html {
+  color-scheme: light;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 제목은 명조로. 남도 음식이라는 소재에 붙는 결을 만든다. */
+.font-display {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* 선택 칩 — 호버와 선택을 같은 색 언어로 보여 준다.
+   커서를 올리면 그 색이 옅게 미리 깔리고, 고르면 꽉 찬다.
+   그래서 "지금 고르려는 것"과 "이미 고른 것"이 구분된다.
+   포인터가 없는 기기(터치)에서는 호버가 눌린 것처럼 보여 헷갈리므로
+   hover:hover 미디어 쿼리로 마우스가 있을 때만 적용한다. */
+@media (hover: hover) {
+  .option-chip[aria-checked="false"]:hover {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 10%, white);
+    color: var(--accent);
+    transform: translateY(-1px);
+  }
+}
+
+.option-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.option-chip[aria-checked="true"] {
+  transform: translateY(-1px);
+}
+
+.option-chip:active {
+  transform: translateY(0);
+}
+
+/* 결과 카드 — 커서를 올리면 눌러 볼 수 있는 대상임을 알린다. */
+@media (hover: hover) {
+  .result-card:hover {
+    border-color: var(--color-line-strong);
+    box-shadow: 0 6px 18px rgb(28 24 21 / 0.08);
+    transform: translateY(-2px);
+  }
+}
+
+.result-card {
+  transition:
+    border-color 150ms,
+    box-shadow 150ms,
+    transform 150ms;
+}
+
+/* Leaflet 지도 — 브랜드 톤에 맞춘다.
+   기본 div-icon은 흰 배경 박스를 그려서 우리 원형 마커 뒤에 네모가
+   비친다. 배경과 테두리를 지워 마커 모양만 남긴다. */
+.region-map-dot {
+  background: transparent !important;
+  border: none !important;
+}
+
+.leaflet-container {
+  font-family: var(--font-sans);
+  background: #dbe2de;
+}
+
+/* 강조 마커 라벨을 이전 SVG 버전과 같은 어두운 알약 모양으로 맞춘다. */
+.region-map-label {
+  background: var(--color-ink) !important;
+  color: var(--color-fg-inverse) !important;
+  border: none !important;
+  border-radius: 999px !important;
+  padding: 4px 10px !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  box-shadow: 0 2px 8px rgb(28 24 21 / 0.25) !important;
+}
+
+.region-map-label::before {
+  display: none; /* 기본 말풍선 꼬리표를 없애 알약 모양을 깔끔히 유지한다 */
+}
+
+.leaflet-tooltip:not(.region-map-label) {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-fg);
+  border-radius: 8px;
+}
+
+.leaflet-control-attribution {
+  font-size: 9px !important;
+}
+
+/* 특화거리 카드 — 커서를 올리면 좌측 색 바가 두꺼워지고 배경이 옅게
+   물들어, 기존의 그림자만 살짝 지는 것보다 훨씬 뚜렷하게 반응을 보여 준다. */
+.street-card {
+  position: relative;
+  border-left: 4px solid var(--color-line);
+  transition:
+    border-left-color 150ms,
+    background-color 150ms,
+    transform 150ms,
+    box-shadow 150ms;
+}
+
+.street-card .street-card-arrow {
+  transition:
+    transform 150ms,
+    color 150ms;
+}
+
+@media (hover: hover) {
+  .street-card:hover {
+    border-left-color: var(--color-brand);
+    background-color: var(--color-brand-soft);
+    box-shadow: 0 8px 20px rgb(28 24 21 / 0.1);
+    transform: translateY(-2px);
+  }
+
+  .street-card:hover .street-card-arrow {
+    transform: translateX(4px);
+    color: var(--color-brand);
+  }
+}
+
+.street-card:active {
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
