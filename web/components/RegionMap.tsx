@@ -37,31 +37,87 @@ const MARKER_COLOR: Record<MapMarker["kind"], string> = {
   tourism: TOURISM_COLOR,
 };
 
+const STREET_ICON_SRC: Record<string, string> = {
+  ST001: "/street-icons/08-bulgogi.png",
+  ST002: "/street-icons/19-bibimbap.png",
+  ST003: "/street-icons/06-dakgui.png",
+  ST004: "/street-icons/16-dwaeji-bulgogi.png",
+  ST005: "/street-icons/11-samchi.png",
+  ST006: "/street-icons/09-jangeo.png",
+  ST007: "/street-icons/05-chamge.png",
+  ST008: "/street-icons/08-bulgogi.png",
+  ST009: "/street-icons/19-bibimbap.png",
+  ST010: "/street-icons/09-jangeo.png",
+  ST011: "/street-icons/18-gomtang.png",
+  ST012: "/street-icons/17-hongeo.png",
+  ST013: "/street-icons/19-bibimbap.png",
+  ST014: "/street-icons/03-juksun.png",
+  ST015: "/street-icons/04-gukbap.png",
+  ST016: "/street-icons/21-minuh.png",
+  ST017: "/street-icons/20-nakji.png",
+  ST018: "/street-icons/13-bajirak.png",
+  ST019: "/street-icons/07-gopchang.png",
+  ST020: "/street-icons/04-gukbap.png",
+  ST021: "/street-icons/06-dakgui.png",
+  ST022: "/street-icons/20-nakji.png",
+  ST023: "/street-icons/09-jangeo.png",
+  ST024: "/street-icons/07-gopchang.png",
+  ST025: "/street-icons/05-chamge.png",
+  ST026: "/street-icons/09-jangeo.png",
+  ST027: "/street-icons/10-haemul-samhap.png",
+  ST028: "/street-icons/01-gulbi.png",
+  ST029: "/street-icons/22-dokcheon-nakji.png",
+  ST030: "/street-icons/14-jeonbok.png",
+  ST031: "/street-icons/02-mirak.png",
+  ST032: "/street-icons/12-kijogae.png",
+  ST033: "/street-icons/15-hanwoo.png",
+  ST034: "/street-icons/23-ganjaemi.png",
+  ST035: "/street-icons/19-bibimbap.png",
+  ST036: "/street-icons/06-dakgui.png",
+};
+
+function escapeHtmlAttr(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
 
 function buildFoodIcon(
   leaflet: typeof L,
   marker: MapMarker,
   opts: { interactive?: boolean; selected?: boolean } = {},
 ): L.DivIcon {
-  const size = opts.selected ? 52 : 44;
-  const inner = opts.selected ? 36 : 30;
-  const ring = opts.selected
-    ? "box-shadow:0 0 0 4px rgba(178,58,34,.18),0 5px 14px rgba(28,24,21,.28);border:3px solid #b23a22;"
-    : "box-shadow:0 3px 10px rgba(28,24,21,.22);border:2px solid rgba(255,255,255,.98);";
+  const size = opts.selected ? 60 : 50;
+  const inner = opts.selected ? 48 : 40;
   const cursor = opts.interactive ? "cursor:pointer;" : "";
   const fallback = marker.iconFallback ?? "🍽️";
-  const img = marker.iconCode
-    ? `<img src="https://cdn.jsdelivr.net/npm/openmoji@17.0.0/color/svg/${marker.iconCode}.svg" alt="" style="position:absolute;inset:6px;width:${inner}px;height:${inner}px;object-fit:contain;" onerror="this.style.display='none'" />`
+  const localSrc = STREET_ICON_SRC[marker.id];
+  const title = escapeHtmlAttr(marker.iconLabel ?? marker.label);
+  const outline = [
+    "drop-shadow(1px 0 0 rgba(255,255,255,.98))",
+    "drop-shadow(-1px 0 0 rgba(255,255,255,.98))",
+    "drop-shadow(0 1px 0 rgba(255,255,255,.98))",
+    "drop-shadow(0 -1px 0 rgba(255,255,255,.98))",
+    "drop-shadow(1px 1px 0 rgba(255,255,255,.98))",
+    "drop-shadow(-1px -1px 0 rgba(255,255,255,.98))",
+    "drop-shadow(-1px 1px 0 rgba(255,255,255,.98))",
+    "drop-shadow(1px -1px 0 rgba(255,255,255,.98))",
+  ].join(" ");
+  const shadow = opts.selected
+    ? "drop-shadow(0 10px 18px rgba(28,24,21,.34))"
+    : "drop-shadow(0 6px 12px rgba(28,24,21,.24))";
+  const img = localSrc
+    ? `<img src="${localSrc}" alt="" style="width:${inner}px;height:${inner}px;object-fit:contain;transform:${opts.selected ? "scale(1.08)" : "scale(1)"};filter:${outline} ${shadow};" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />`
     : "";
 
   return leaflet.divIcon({
     className: "region-map-food-icon",
-    html: `<span title="${marker.iconLabel ?? marker.label}" style="
-      position:relative;display:flex;align-items:center;justify-content:center;
-      width:${size}px;height:${size}px;border-radius:999px;background:rgba(255,255,255,.97);
-      ${ring}${cursor}
-      font-size:${opts.selected ? 26 : 22}px;line-height:1;
-    "><span aria-hidden="true" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;">${fallback}</span>${img}</span>`,
+    html: `<span title="${title}" style="position:relative;display:flex;align-items:center;justify-content:center;width:${size}px;height:${size}px;background:transparent;${cursor}">
+      ${img}
+      <span aria-hidden="true" style="display:${localSrc ? "none" : "flex"};align-items:center;justify-content:center;width:${inner}px;height:${inner}px;font-size:${opts.selected ? 28 : 24}px;line-height:1;filter:${shadow};">${fallback}</span>
+    </span>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
   });
@@ -155,7 +211,7 @@ export function RegionMap({
       );
 
       map = leaflet.map(containerRef.current, {
-        scrollWheelZoom: false, // 페이지를 스크롤하다 지도 위에서 확대되는 사고를 막는다
+        scrollWheelZoom: false,
         attributionControl: true,
         zoomControl: true,
         ...(lockToJeonnam
@@ -188,8 +244,6 @@ export function RegionMap({
       for (const m of ordered) {
         const color = MARKER_COLOR[m.kind];
         const size = m.highlight ? 20 : m.kind === "street" ? 15 : 12;
-        // onSelect가 있으면 내 위치를 뺀 핀은 누를 수 있다. 무엇으로 이어질지는
-        // 부르는 쪽이 정한다(지금은 특화거리 핀 → 거리 상세).
         const clickable = Boolean(onSelectRef.current) && m.kind !== "me";
         const markerIcon = m.kind === "street"
           ? buildFoodIcon(leaflet, m, { interactive: clickable, selected: Boolean(m.highlight) })
@@ -219,10 +273,6 @@ export function RegionMap({
       }
 
       if (lockToJeonnam) {
-        // 첫 화면은 추천 결과와 무관하게 항상 전라남도 전체가 먼저 보인다.
-        // 추천이 생기면 별도의 selectedId effect가 해당 음식 위치로 flyTo 한다.
-        // 첫 진입에서는 전남 본토와 주요 도서권이 화면을 대부분 채우도록
-        // 기존 fitBounds보다 한 단계 가까운 고정 뷰를 사용한다.
         map.setView([34.72, 126.72], 9);
       } else if (points.length === 1) {
         map.setView([points[0].lat, points[0].lon], 14);
@@ -231,9 +281,6 @@ export function RegionMap({
         map.fitBounds(bounds, { padding: [32, 32], maxZoom: 15 });
       }
 
-      // 추천 결과가 생기면서 새 음식 마커가 추가된 경우에는 map 자체가
-      // 다시 만들어지므로 selectedId effect보다 이 코드가 더 확실하다.
-      // 초기 전남 전체 화면을 그린 직후 선택된 음식 위치로 부드럽게 이동한다.
       if (selectedId) {
         const selectedMarker = markerRefs.current.get(selectedId);
         if (selectedMarker) {
@@ -257,15 +304,11 @@ export function RegionMap({
       mapRef.current = null;
       markerRefs.current = new Map();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- pointsKey가 실질적인 의존성이다.
   }, [pointsKey, lockToJeonnam]);
 
-  // 선택된 핀으로 지도를 옮기고 라벨을 연다. 지도 재생성과 분리해서,
-  // 선택이 바뀌어도 확대·중심이 초기화되지 않는다.
   useEffect(() => {
     const leaflet = leafletRef.current;
     if (leaflet) {
-      // 선택이 바뀌어도 지도를 재생성하지 않고 음식 아이콘의 크기/테두리만 갱신한다.
       for (const point of points) {
         if (point.kind !== "street" && point.kind !== "food") continue;
         const mapMarker = markerRefs.current.get(point.id);
@@ -310,9 +353,6 @@ export function RegionMap({
     <div
       ref={containerRef}
       style={{ height: typeof height === "number" ? `${height}px` : height }}
-      // isolate: Leaflet이 내부 pane에 박아 두는 z-index(200~700)가
-      // 페이지의 다른 요소와 충돌하지 않게 이 지도만의 stacking context로
-      // 가둔다. 랜딩 페이지 배경 지도에서 버튼 클릭이 막힌 원인이었다.
       className="isolate h-full w-full overflow-hidden border border-line lg:rounded-none"
       role="img"
       aria-label={`추천 지점 ${points.length}곳의 위치 지도`}
