@@ -132,6 +132,67 @@ function fallbackRecommend(
   };
 }
 
+
+function recoverFoodIds(
+  parsed: LlmResult,
+  catalog: ReturnType<typeof compactFood>[],
+) {
+  const catalogIds = new Set(catalog.map((food) => food.id));
+
+  // 1) 모델이 정확한 ID를 반환한 경우 그대로 사용
+  const exactIds = parsed.foodIds.filter((id) => catalogIds.has(id));
+  if (exactIds.length > 0) return exactIds.slice(0, 5);
+
+  // 2) 모델이 ID 대신 음식 이름을 반환한 경우 이름 → 실제 ID로 변환
+  const normalizedReturned = parsed.foodIds.map((value) =>
+    String(value).replace(/\s+/g, "").toLowerCase(),
+  );
+
+  const fromReturnedNames = catalog
+    .filter((food) => {
+      const names = [food.name, food.displayName]
+        .filter(Boolean)
+        .map((value) =>
+          String(value).replace(/\s+/g, "").toLowerCase(),
+        );
+
+      return normalizedReturned.some((returned) =>
+        names.some(
+          (name) =>
+            name === returned ||
+            name.includes(returned) ||
+            returned.includes(name),
+        ),
+      );
+    })
+    .map((food) => food.id);
+
+  if (fromReturnedNames.length > 0) {
+    return [...new Set(fromReturnedNames)].slice(0, 5);
+  }
+
+  // 3) foodIds가 비어 있어도 reply 안에 추천 음식명이 있으면 복구
+  const replyNormalized = parsed.reply
+    .replace(/\s+/g, "")
+    .toLowerCase();
+
+  const fromReply = catalog
+    .filter((food) => {
+      const names = [food.name, food.displayName]
+        .filter(Boolean)
+        .map((value) =>
+          String(value).replace(/\s+/g, "").toLowerCase(),
+        );
+
+      return names.some(
+        (name) => name.length >= 2 && replyNormalized.includes(name),
+      );
+    })
+    .map((food) => food.id);
+
+  return [...new Set(fromReply)].slice(0, 5);
+}
+
 function extractJson(text: string): LlmResult | null {
   try {
     const direct = JSON.parse(text) as LlmResult;
@@ -186,10 +247,13 @@ async function callSchoolLlm(
 4) 비슷한 음식만 반복하지 말고 가능하면 다양한 메뉴를 고른다.
 5) 한국어로 짧게 추천 이유를 설명한다.
 6) 오직 JSON만 반환한다.
-7) foodIds에는 음식 이름이 아니라 반드시 아래 catalog의 id 값을 넣는다.
+7) foodIds에는 음식 이름이 아니라 반드시 아래 catalog의 id 값을 그대로 복사해 넣는다.
+8) foodIds는 절대로 빈 배열로 반환하지 않는다. 반드시 후보 중 1~5개를 고른다.
+9) 예를 들어 후보가 {"id":"전복장|전복","name":"전복장"}라면 foodIds에는 "전복장|전복"을 넣어야 한다.
+10) 후보에 없는 ID나 음식 이름을 새로 만들지 않는다.
 
 반환 형식:
-{"reply":"...","foodIds":["음식ID"],"understood":["매움","국물"]}
+{"reply":"추천 이유","foodIds":["catalog에 있는 정확한 id"],"understood":["이해한 취향"]}
 
 현재 ${getKstMonth()}월 음식 후보:
 ${JSON.stringify(catalog)}`;
@@ -202,7 +266,7 @@ ${JSON.stringify(catalog)}`;
     },
     body: JSON.stringify({
       model,
-      temperature: 0.2,
+      temperature: 0,
       max_tokens: 700,
       messages: [
         { role: "system", content: system },
@@ -388,13 +452,22 @@ export async function POST(request: Request) {
     console.log("=== SCHOOL LLM FOOD IDS ===");
     console.log(parsed.foodIds);
 
-    const foodIds = parsed.foodIds
+    // Qwen이 음식 이름을 반환하거나 foodIds를 비워도
+    // reply/후보 목록을 이용해 실제 음식 ID로 복구한다.
+    const recoveredIds = schoolUrl
+      ? recoverFoodIds(parsed, candidates)
+      : parsed.foodIds;
+
+    const foodIds = recoveredIds
       .filter(
         (id) =>
           validIds.has(id) &&
           !excluded.has(id),
       )
       .slice(0, 5);
+
+    console.log("=== RECOVERED FOOD IDS ===");
+    console.log(recoveredIds);
 
     console.log("=== VALID FOOD IDS ===");
     console.log(foodIds);
@@ -411,6 +484,7 @@ export async function POST(request: Request) {
           schoolUrlExists: Boolean(schoolUrl),
           reason: "no_valid_food_ids",
           llmFoodIds: parsed.foodIds,
+          recoveredIds,
         },
       });
     }
