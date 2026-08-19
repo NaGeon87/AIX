@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { RegionMap, type MapMarker } from "@/components/RegionMap";
+import { type MapMarker } from "@/components/RegionMap";
+import { StreetMapPanel } from "@/components/StreetMapPanel";
 import { TasteBadges } from "@/components/TasteChart";
 import { findStreet, foods, streets } from "@/lib/data";
 import { streetDisplayName } from "@/lib/korean";
@@ -74,36 +75,51 @@ export default async function StreetPage({
 
   return (
     <main className="mx-auto min-h-dvh w-full max-w-[520px] bg-canvas pb-12">
-      <header className="bg-ink px-6 pb-5 pt-11 text-fg-inverse">
-        <Link
-          href={`/result?${preferenceToQuery(pref)}`}
-          className="block w-fit text-[13px] text-[#b8afa6] hover:text-fg-inverse"
-        >
-          ← 추천 목록
-        </Link>
-        <span className="mt-3 block w-fit rounded-full bg-brand-soft px-2.5 py-1 text-[11px] font-bold text-brand">
-          {street.category} 특화거리
-        </span>
-        <h1 className="font-display mt-2 text-[26px] leading-tight">
-          {streetDisplayName(street)}
-        </h1>
-        <p className="mt-1.5 text-[13px] text-[#b8afa6]">{street.address}</p>
+      {/* 지도가 주인공이라 헤더는 얇은 앱바로 줄인다. */}
+      <header className="bg-ink px-5 py-3 text-fg-inverse">
+        <div className="flex items-center justify-between gap-3">
+          <Link
+            href={`/result?${preferenceToQuery(pref)}`}
+            className="shrink-0 text-[13px] text-[#b8afa6] hover:text-fg-inverse"
+          >
+            ← 추천 목록
+          </Link>
+          <h1 className="font-display truncate text-[16px]">{streetDisplayName(street)}</h1>
+          <span className="shrink-0 rounded-full bg-brand-soft px-2 py-0.5 text-[10px] font-bold text-brand">
+            {street.category}
+          </span>
+        </div>
       </header>
 
-      <section className="px-5 pt-4">
-        <RegionMap markers={markers} height={220} />
-        {street.coordSource !== "원본" && (
-          <p className="mt-1.5 text-[11px] text-fg-muted">
-            ※ 원본 데이터에 좌표가 없어 주소를 기준으로 보정한 위치입니다.
+      <StreetMapPanel baseMarkers={markers} nearby={street.nearby} />
+
+      <section className="px-5 pt-3">
+        {street.coordSource === "주소기반보정" && (
+          <p className="mb-2 text-[11px] text-fg-muted">
+            ※ 원본에 좌표가 없어 주소를 기준으로 보정한 위치입니다.
           </p>
         )}
+        {street.lat === null && (
+          <p className="mb-2 text-[11px] text-fg-muted">
+            ※ 좌표가 없어 지도에 위치를 찍지 못했습니다. 아래 주소로 확인해 주세요.
+          </p>
+        )}
+        <p className="text-[13px] text-fg-muted">{street.address}</p>
       </section>
 
-      <section className="grid grid-cols-3 gap-2 px-5 pt-4">
-        <Stat label="점포" value={`${street.shopCount}곳`} />
+      <section className="grid grid-cols-3 gap-2 px-5 pt-3">
+        {/* 0은 "점포가 없다"가 아니라 "모른다"이다. 세어 본 적 없는 값을
+            0곳으로 적으면 없는 사실을 만들어 낸다. */}
+        <Stat label="점포" value={street.shopCount > 0 ? `${street.shopCount}곳` : "-"} />
         <Stat
           label="길이"
-          value={street.lengthM >= 1000 ? `${(street.lengthM / 1000).toFixed(1)} km` : `${street.lengthM} m`}
+          value={
+            street.lengthM <= 0
+              ? "-"
+              : street.lengthM >= 1000
+                ? `${(street.lengthM / 1000).toFixed(1)} km`
+                : `${street.lengthM} m`
+          }
         />
         <Stat label="지정" value={street.designatedYear ? `${street.designatedYear}년` : "-"} />
       </section>
@@ -212,11 +228,19 @@ export default async function StreetPage({
       </section>
 
       <footer className="px-6 pt-6 text-[11px] leading-relaxed text-fg-muted">
+        {street.orgName && (
+          <p>
+            관리기관 {street.orgName}
+            {street.orgTel && ` · ${street.orgTel}`}
+          </p>
+        )}
+        {/* 공공데이터에 없어 직접 넣은 거리가 있다. 출처를 싸잡아 적으면
+            공공데이터가 보증하지 않는 항목까지 보증하는 것처럼 읽힌다. */}
         <p>
-          관리기관 {street.orgName}
-          {street.orgTel && ` · ${street.orgTel}`}
+          {street.dataDate
+            ? `공공데이터포털 지역특화거리 ${street.dataDate} 기준`
+            : "공공데이터 지역특화거리 목록에는 없어 직접 추가한 거리입니다. 점포수·길이·지정연도 정보가 없습니다."}
         </p>
-        <p>공공데이터포털 지역특화거리 {street.dataDate} 기준</p>
       </footer>
     </main>
   );

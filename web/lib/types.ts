@@ -56,6 +56,22 @@ export interface Food {
   restaurants: Restaurant[];
 }
 
+/** 거리 반경 안의 관광지·문화시설. TourAPI 위치기반 조회로 빌드 시점에 받는다. */
+export interface NearbyPlace {
+  id: string;
+  title: string;
+  /** "관광지" | "문화시설" */
+  type: string;
+  addr: string;
+  /** 거리 지점에서 몇 m */
+  dist: number;
+  lat: number | null;
+  lon: number | null;
+  /** 대표 이미지 URL. 없을 수 있다. */
+  image: string;
+  tel: string;
+}
+
 export interface Street {
   id: string;
   name: string;
@@ -74,6 +90,7 @@ export interface Street {
   orgName: string;
   orgTel: string;
   dataDate: string;
+  nearby: NearbyPlace[];
 }
 
 export interface Meta {

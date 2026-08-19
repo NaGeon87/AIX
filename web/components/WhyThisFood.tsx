@@ -131,8 +131,9 @@ export function WhyThisFood({
               </li>
             )}
             <li>
-              · 순위가 같으면 이번 달 제철인 쪽을, 그래도 같으면 파는 집이 많은 쪽을 앞에
-              둡니다. 이 음식은 {candidate.restaurantCount}곳에서 팝니다.
+              · 순위가 같으면 이번 달 제철인 쪽을 앞에 둡니다. 그래도 같으면 볼 때마다 다시
+              섞어, 같은 취향에도 다른 음식이 오릅니다. 이 음식은{" "}
+              {candidate.restaurantCount}곳에서 팝니다.
             </li>
           </ul>
 

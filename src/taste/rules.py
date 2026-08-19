@@ -58,7 +58,9 @@ _TRAILING_NOISE = re.compile(r"[\s,/·]*(등|외|기타)\s*$")
 _BRACKETS = re.compile(r"[（(\[][^）)\]]*[）)\]]?")
 _PRICE_NOTE = re.compile(r"※.*$")
 _MULTISPACE = re.compile(r"\s+")
-_NOT_A_MENU = re.compile(r"(변동|문의|권장|예약|사전|참고 요망)")
+# '추가메뉴'는 곁들임 목록의 머리말이지 메뉴명이 아니다. 괄호를 벗기면
+# 이름이 통째로 '추가메뉴'만 남아, 괄호 안 재료로 엉뚱하게 매칭된다.
+_NOT_A_MENU = re.compile(r"(변동|문의|권장|예약|사전|참고 요망|^추가\s*메뉴$)")
 
 
 def normalize_menu(name: str) -> str:

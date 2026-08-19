@@ -65,6 +65,33 @@ STREET_TAGS: dict[str, dict] = {
     "오리요리의거리":              {"category": "음식", "food_keywords": ["오리", "오리탕"]},
 }
 
+# --------------------------------------------------------------------------
+# 공공데이터에 없는 거리
+# --------------------------------------------------------------------------
+# 원본 32행은 '지역특화거리'로 지정·고시된 곳만 담고 있어, 실제로 형성돼 있어도
+# 빠진 거리가 있다. 여기에 적어 두면 원본 뒤에 이어 붙는다. streets.csv는
+# 통째로 다시 만들어지는 파일이라, 산출물을 직접 고치면 다음 빌드에 지워진다.
+#
+# 원본에서 온 값과 섞이지 않게 출처를 남긴다 — 좌표는 coord_source, 나머지는
+# 모르는 값을 지어내지 않고 비워 둔다(점포수 0, 지정연도 없음).
+EXTRA_STREETS: list[dict] = [
+    {
+        "name": "무등산 보리밥 거리",
+        "description": "",
+        "category": "음식",
+        # '보리'가 아니라 '보리밥'으로 적는다. '보리'로 두면 메뉴명 매칭이
+        # '보리굴비 / 전복 / 산낙지'까지 물어 와 굴비 요리가 보리밥 거리에 붙는다.
+        "food_keywords": ["보리밥"],
+        "road_addr": "광주광역시 동구 지호로",
+        "jibun_addr": "",
+        "shop_count": 0,
+        "designated_year": "",
+        "org_name": "",
+        "org_tel": "",
+        "data_date": "",
+    },
+]
+
 # 원본 위도·경도 결측 보정. 소재지 주소를 지도에서 확인해 채운 값이라
 # 출처를 남겨 둔다(coord_source 컬럼).
 COORD_FALLBACK: dict[str, tuple[float, float]] = {
@@ -167,13 +194,41 @@ def main() -> None:
             "data_date": (row.get("데이터기준일자") or "").strip(),
         })
 
+    # 공공데이터에 없는 거리를 뒤에 잇는다. 번호는 원본 행수 다음부터 매겨
+    # 원본이 늘어나도 id가 겹치지 않는다.
+    for offset, extra in enumerate(EXTRA_STREETS, start=1):
+        sido, sigungu = _split_region(extra["road_addr"] or extra["jibun_addr"])
+        lat, lon = COORD_FALLBACK.get(extra["name"], ("", ""))
+        out_rows.append({
+            "street_id": f"ST{len(rows) + offset:03d}",
+            "name": extra["name"],
+            "description": extra["description"],
+            "category": extra["category"],
+            "food_keywords": ";".join(extra["food_keywords"]),
+            "sido": sido,
+            "sigungu": sigungu,
+            "road_addr": extra["road_addr"],
+            "jibun_addr": extra["jibun_addr"],
+            "lat": lat,
+            "lon": lon,
+            "coord_source": "주소기반보정" if lat != "" else "결측",
+            "length_m": 0,
+            "length_source": "없음",
+            "shop_count": extra["shop_count"],
+            "designated_year": extra["designated_year"],
+            "org_name": extra["org_name"],
+            "org_tel": extra["org_tel"],
+            "data_date": extra["data_date"],
+        })
+
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     with OUTPUT.open("w", encoding="utf-8-sig", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=FIELDS)
         writer.writeheader()
         writer.writerows(out_rows)
 
-    print(f"거리 {len(out_rows)}건 저장 → {OUTPUT}")
+    print(f"거리 {len(out_rows)}건 저장 → {OUTPUT} "
+          f"(원본 {len(rows)}건 + 추가 {len(EXTRA_STREETS)}건)")
     from collections import Counter
     print("업종 분포:", dict(Counter(r["category"] for r in out_rows)))
     print("좌표 출처:", dict(Counter(r["coord_source"] for r in out_rows)))

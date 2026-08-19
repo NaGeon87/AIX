@@ -26,6 +26,7 @@ redtable과 달리 **data.go.kr REST 유형**이므로 기관 사이트 별도 �
    그래서 ldongCode2로 시도 목록을 받아 **이름으로 매칭**해 코드를 찾는다.
 """
 import json
+import re
 import time
 from collections import Counter
 from pathlib import Path
@@ -226,6 +227,33 @@ def split_area(addr: str) -> tuple[str, str]:
     return ("광주" if sigungu in GWANGJU_DISTRICTS else "전남"), sigungu
 
 
+_MENU_SEP = "[,/·・、|\n]"
+_OPEN, _CLOSE = "(（[", ")）]"
+
+
+def split_menu_list(treat: str) -> list[str]:
+    """취급메뉴 문자열을 개별 메뉴로 쪼갠다.
+
+    괄호 안의 쉼표에서는 자르지 않는다. '조림(병어, 갈치)'를 그냥 쉼표로
+    자르면 '조림(병어'와 '갈치)'라는 없는 메뉴 둘이 생기고, 뒷조각은 재료명만
+    남아 조리법을 알 수 없게 된다. 닫는 괄호가 없이 끝나는 원문도 있어
+    깊이는 0 아래로 내려가지 않게 막는다.
+    """
+    parts, buf, depth = [], [], 0
+    for ch in treat:
+        if ch in _OPEN:
+            depth += 1
+        elif ch in _CLOSE:
+            depth = max(0, depth - 1)
+        if depth == 0 and re.match(_MENU_SEP, ch):
+            parts.append("".join(buf))
+            buf = []
+            continue
+        buf.append(ch)
+    parts.append("".join(buf))
+    return [p.strip() for p in parts if p.strip()]
+
+
 def build_normalized(region_label: str, restaurants: list[dict],
                      intros: dict[str, dict]) -> dict:
     """redtable_region_food가 저장하는 구조와 같은 모양으로 만든다.
@@ -234,9 +262,6 @@ def build_normalized(region_label: str, restaurants: list[dict],
     대표메뉴 1개 + 취급메뉴 문자열 1개다. 취급메뉴를 개별 메뉴로 쪼개
     메뉴명 단위 매칭(신뢰도 high)이 가능하게 만든다.
     """
-    import re
-    split_re = re.compile(r"[,/·・、|\n]+")
-
     rstr_rows, menu_rows, expln_rows = [], [], []
 
     for r in restaurants:
@@ -269,9 +294,8 @@ def build_normalized(region_label: str, restaurants: list[dict],
         names = []
         if first:
             names.append(first)
-        for part in split_re.split(treat):
-            part = part.strip()
-            if part and part not in names:
+        for part in split_menu_list(treat):
+            if part not in names:
                 names.append(part)
 
         for idx, name in enumerate(names):

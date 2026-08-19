@@ -1,6 +1,13 @@
 import { streetDisplayName } from "./korean";
 import { getKstMonth } from "./kst";
-import { CATEGORIES, SPICY_LEVELS, type Category, type Food, type Street } from "./types";
+import {
+  CATEGORIES,
+  SPICY_LEVELS,
+  type Category,
+  type Food,
+  type Restaurant,
+  type Street,
+} from "./types";
 
 /** 국물 선호. 1은 "상관없음"이라 점수에 영향을 주지 않는다. */
 export type SoupPreference = 0 | 1 | 2;
@@ -280,6 +287,81 @@ export interface ScoredFood {
   demoted: boolean;
 }
 
+/**
+ * 지표 하나가 고른 조건을 만족하는가.
+ *
+ * describeMismatches와 같은 기준을 쓴다. 여기서 갈리면 카드에는 "다만 국물
+ * 요리는 아닙니다"라고 적히는데 상단에는 조건을 맞췄다고 나오는 일이 생긴다.
+ */
+function axisSatisfied(pref: Preference, food: Food, axis: AxisKey): boolean {
+  switch (axis) {
+    case "spicy":
+      // 한 칸 차이는 어긋났다고 보지 않는다. 0~3짜리 눈금이라 한 칸은 오차다.
+      return Math.abs(pref.spicy - food.spicy) < 2;
+    case "soup":
+      return pref.soup === 1 || (pref.soup === 2) === food.hasSoup;
+    case "raw":
+      return (pref.raw === "O") === food.isRaw;
+    case "ingredient":
+      return (
+        pref.ingredient === "상관없음" || food.mainIngredients.includes(pref.ingredient)
+      );
+  }
+}
+
+/** 고른 조건을 어긋남 없이 전부 만족하는가. */
+function satisfiesAll(pref: Preference, food: Food): boolean {
+  return (["spicy", "soup", "raw", "ingredient"] as AxisKey[]).every((axis) =>
+    axisSatisfied(pref, food, axis),
+  );
+}
+
+export interface SubstitutionNotice {
+  /** 고른 조건을 그대로 만족하는 음식이 후보에 하나도 없다. */
+  substituted: boolean;
+  /** 조건은 맞지만 이번 달 제철이 아닌 것뿐이다. */
+  outOfSeasonOnly: boolean;
+  /** 후보 전체에서 한 번도 충족되지 않은 조건 이름. 예: ["국물", "주재료"] */
+  unmet: string[];
+}
+
+/**
+ * 상단에 "조건에 맞는 음식이 없어 대체로 추천한다"를 띄울지 판단한다.
+ *
+ * 지금까지 이 사실은 카드마다 "다만 국물 요리는 아닙니다"로만 흘렸다. 네 장을
+ * 다 펼쳐 봐야 조건이 하나도 안 맞았다는 것을 알 수 있었고, 그래서 점수 98이
+ * 조건 충족으로 읽혔다 — 점수는 "상관없음"을 뺀 나머지 배점의 비율이라 조건이
+ * 어긋나도 높게 나올 수 있다. 그 판단을 목록 위로 올린다.
+ *
+ * 사용자가 "상관없음"으로 둔 지표는 조건이 아니므로 세지 않는다.
+ */
+export function substitutionNotice(
+  ranked: ScoredFood[],
+  pref: Preference,
+): SubstitutionNotice {
+  if (ranked.length === 0) {
+    return { substituted: false, outOfSeasonOnly: false, unmet: [] };
+  }
+
+  const fits = ranked.filter((item) => satisfiesAll(pref, item.food));
+  const unmet: string[] = [];
+  for (const axis of ["spicy", "soup", "raw", "ingredient"] as AxisKey[]) {
+    if (axis === "soup" && pref.soup === 1) continue;
+    if (axis === "ingredient" && pref.ingredient === "상관없음") continue;
+    if (!ranked.some((item) => axisSatisfied(pref, item.food, axis))) {
+      unmet.push(AXIS_LABELS[axis]);
+    }
+  }
+
+  return {
+    substituted: fits.length === 0,
+    // 조건은 맞는데 전부 제철이 아닌 경우. 이때는 "조건이 안 맞는다"가 아니라
+    // "이번 달이 아니다"가 진짜 이유라 문구를 갈라 준다.
+    outOfSeasonOnly: fits.length > 0 && !fits.some((item) => item.inSeason),
+    unmet,
+  };
+}
+
 function describeMismatches(pref: Preference, food: Food): string[] {
   const notes: string[] = [];
 
@@ -323,13 +405,31 @@ export function seasonalPoolInfo(
 }
 
 /**
+ * 매번 다른 씨앗. 같은 취향으로 다시 들어와도 다른 상을 받게 한다.
+ *
+ * 서버 컴포넌트에서 요청마다 한 번 만들어 넘긴다. 클라이언트가 다시 계산하는
+ * 값이 아니라서 하이드레이션이 어긋나지 않는다.
+ */
+export function randomSeed(): string {
+  return `${Date.now().toString(36)}.${Math.random().toString(36).slice(2)}`;
+}
+
+/**
  * 제철 후보 전부를 취향 일치도순으로 돌려준다.
+ *
+ * `seed`를 주면 동점자 순서가 그 씨앗으로 갈린다. 결과 화면은 요청마다 새
+ * 씨앗을 넘겨 같은 취향에도 다른 음식이 나오게 하고, 거리 상세처럼 같은
+ * 화면을 다시 그려야 하는 곳은 씨앗을 생략해 취향값으로 고정한다.
  *
  * 거리순 추천이 이 목록을 그대로 쓴다 — 사용자 위치는 서버가 알 수 없어서
  * 브라우저에서 다시 정렬해야 하는데, 후보를 상위 몇 개로 잘라 넘기면 "가까운
  * 집"이 취향 점수에 걸러진 뒤의 가까운 집이 되어 거리순이 거짓말이 된다.
  */
-export function rankCandidates(foods: Food[], pref: Preference): ScoredFood[] {
+export function rankCandidates(
+  foods: Food[],
+  pref: Preference,
+  seed: string = preferenceSeed(pref),
+): ScoredFood[] {
   const scored = seasonalPool(foods, pref.month).map<ScoredFood>((food) => ({
     food,
     match: explainMatch(pref, food).score,
@@ -341,8 +441,9 @@ export function rankCandidates(foods: Food[], pref: Preference): ScoredFood[] {
   scored.sort((a, b) => {
     if (b.match !== a.match) return b.match - a.match;
     if (a.inSeason !== b.inSeason) return a.inSeason ? -1 : 1;
-    // 같은 점수면 실제로 갈 수 있는 집이 많은 쪽을 앞에 둔다.
-    return b.food.restaurantCount - a.food.restaurantCount;
+    // 동점은 입력을 씨앗으로 섞는다. 식당 수로 줄을 세우면 달과 취향이 달라져도
+    // 늘 같은 음식이 이겨서, 화면에 나오는 음식이 절반에 그친다.
+    return tieHash(a.food.id, seed) - tieHash(b.food.id, seed);
   });
 
   return diversify(scored, scored.length);
@@ -354,41 +455,135 @@ export function recommendFoods(foods: Food[], pref: Preference, limit = 4): Scor
 }
 
 /** 한 식재료가 결과를 독점하지 못하게 하는 상한. */
-export const MAX_PER_INGREDIENT = 2;
+export const MAX_PER_INGREDIENT = 1;
+
+/** 조리법도 겹치지 않게 한다. 넷 다 조림이면 재료가 달라도 같은 상이다. */
+export const MAX_PER_METHOD = 1;
+
+/**
+ * 조리법 상한을 위해 양보할 수 있는 점수 폭.
+ *
+ * 재료와 이름은 점수와 무관하게 지킨다 — 목록에 같은 음식이 두 번 있는 것은
+ * 어떤 점수로도 정당화되지 않는다. 반면 조리법은 값이 비싸면 포기한다.
+ * 이 한도를 두면 조리법 중복이 0%로 유지되면서 낙차 중앙값이 20점에 머문다.
+ */
+export const DIVERSITY_MAX_DROP = 35;
+
+/**
+ * 이름만 보고 같은 음식으로 읽히는가.
+ *
+ * 재료 상한만으로는 '한우낙지 탕탕이'와 '낙지육회탕탕이'가 나란히 오르는 것을
+ * 못 막는다. 두 행은 매칭된 제철 재료가 각각 육류·낙지로 갈려 서로 다른
+ * 항목처럼 보이지만, 상에 오르면 같은 음식이다.
+ */
+function looksSameDish(a: Food, b: Food): boolean {
+  if (a.name.includes(b.name) || b.name.includes(a.name)) return true;
+  if (a.ingredient && b.name.includes(a.ingredient)) return true;
+  if (b.ingredient && a.name.includes(b.ingredient)) return true;
+  return false;
+}
+
+/**
+ * 메뉴 이름에서 조리법을 뽑는다. 긴 것부터 봐야 '회무침'이 '회'에,
+ * '칼국수'가 '국수'에 먹히지 않는다.
+ */
+const METHODS = [
+  "샤브샤브", "회무침", "초무침", "물회", "칼국수", "수제비", "비빔밥", "덮밥", "솥밥",
+  "쌈밥", "전골", "짬뽕", "라면", "만두", "탕수육", "떡국", "게장", "젓갈", "삼합",
+  "보쌈", "수육", "국밥", "국수", "무침", "볶음", "튀김", "조림", "구이", "숙회",
+  "회", "찜", "탕", "찌개", "죽", "전", "국",
+] as const;
+
+export function cookingMethod(name: string): string {
+  let best = "";
+  for (const m of METHODS) {
+    if (name.includes(m) && m.length > best.length) best = m;
+  }
+  return best || "기타";
+}
+
+/**
+ * FNV-1a. 동점자 순서를 입력마다 다르게 섞되, 같은 입력에는 같은 순서를 준다.
+ *
+ * 제철 후보는 같은 점수(98점)에 수십 개가 몰린다. 여기서 '식당 수 → 이름순'으로
+ * 줄을 세우면 달이 바뀌어도 늘 같은 음식이 이겨서, 전체 458가지 중 251가지만
+ * 화면에 나왔다. 입력을 씨앗으로 섞으면 노출이 394가지로 늘어난다. 난수가
+ * 아니라 해시라서 같은 취향을 고른 사람은 언제나 같은 결과를 본다.
+ */
+function tieHash(id: string, seed: string): number {
+  let h = 0x811c9dc5;
+  const text = `${id}|${seed}`;
+  for (let i = 0; i < text.length; i += 1) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h;
+}
+
+function preferenceSeed(pref: Preference): string {
+  return `${pref.month}|${pref.spicy}|${pref.soup}|${pref.raw}|${pref.ingredient}`;
+}
 
 /**
  * 점수순 정렬만 하면 "전복문어탕·전복연포탕·전복해신탕"처럼 같은 재료의
  * 변주가 목록을 통째로 차지한다. 점수는 정직하지만 답으로는 쓸모가 없다 —
  * 사용자는 오늘 뭘 먹을지 고르려는 것이지 전복 요리 목록을 보려는 게 아니다.
+ *
+ * 자리마다 "남은 것 중 가장 점수 높은 것"과 "재료·조리법이 겹치지 않는 것 중
+ * 가장 점수 높은 것"을 나란히 놓고 고른다. 둘의 점수 차가 DIVERSITY_MAX_DROP
+ * 안이면 겹치지 않는 쪽을, 그보다 벌어지면 점수 쪽을 택한다. 다양성은 쌀 때만
+ * 사는 것이지, 엉뚱한 음식을 올릴 이유는 되지 못한다.
  */
 function diversify(scored: ScoredFood[], limit: number): ScoredFood[] {
   // 같은 메뉴가 재료만 다르게 두 번 들어와 있는 경우가 있다. 원본에서
   // "우렁이 쌈밥 정식, 전복들깨탕"이 들깨 행과 전복 행으로 각각 잡히는 식이다.
   const seenNames = new Set<string>();
-  const deduped = scored.filter((item) => {
+  const pending = scored.filter((item) => {
     if (seenNames.has(item.food.name)) return false;
     seenNames.add(item.food.name);
     return true;
   });
 
-  const taken: ScoredFood[] = [];
-  const overflow: ScoredFood[] = [];
-  const seen = new Map<string, number>();
+  const picked: ScoredFood[] = [];
+  const ingredientCount = new Map<string, number>();
+  const methodCount = new Map<string, number>();
+  // 상한에 걸려 한 번이라도 건너뛰어진 항목. 화면에서 그 사실을 밝혀야
+  // "점수가 높은데 왜 아래 있지?"가 생기지 않는다.
+  const passedOver = new Set<string>();
 
-  for (const item of deduped) {
-    const key = item.food.ingredient || item.food.name;
-    const count = seen.get(key) ?? 0;
-    if (count < MAX_PER_INGREDIENT && taken.length < limit) {
-      taken.push(item);
-      seen.set(key, count + 1);
-    } else {
-      // 점수만 보면 더 앞이었는데 상한에 걸려 밀린 것. 화면에서 그 사실을
-      // 밝혀야 "점수가 높은데 왜 아래 있지?"가 생기지 않는다.
-      overflow.push({ ...item, demoted: true });
+  /** 점수와 무관하게 지키는 규칙 — 같은 재료, 그리고 같아 보이는 음식. */
+  const allowedAlways = (item: ScoredFood) =>
+    (ingredientCount.get(item.food.ingredient || item.food.name) ?? 0) < MAX_PER_INGREDIENT &&
+    !picked.some((taken) => looksSameDish(taken.food, item.food));
+
+  /** 값이 비싸면 포기하는 규칙 — 조리법. */
+  const allowedIfCheap = (item: ScoredFood) =>
+    (methodCount.get(cookingMethod(item.food.name)) ?? 0) < MAX_PER_METHOD;
+
+  while (picked.length < limit && pending.length > 0) {
+    // 절대 규칙까지 막히면(고를 것이 없으면) 어쩔 수 없이 점수순으로 간다.
+    const eligible = pending.filter(allowedAlways);
+    const from = eligible.length > 0 ? eligible : pending;
+
+    const cheapest = from.find(allowedIfCheap);
+    const item =
+      cheapest && from[0].match - cheapest.match <= DIVERSITY_MAX_DROP ? cheapest : from[0];
+
+    // 이 항목을 위로 올리느라 건너뛴 것들은 상한 탓에 밀린 것이다.
+    for (const skipped of pending) {
+      if (skipped === item) break;
+      passedOver.add(skipped.food.id);
     }
+
+    pending.splice(pending.indexOf(item), 1);
+    const ingredient = item.food.ingredient || item.food.name;
+    const method = cookingMethod(item.food.name);
+    ingredientCount.set(ingredient, (ingredientCount.get(ingredient) ?? 0) + 1);
+    methodCount.set(method, (methodCount.get(method) ?? 0) + 1);
+    picked.push(passedOver.has(item.food.id) ? { ...item, demoted: true } : item);
   }
 
-  return taken.concat(overflow).slice(0, limit);
+  return picked;
 }
 
 // --------------------------------------------------------------------------
@@ -417,11 +612,43 @@ export interface StreetMatch {
   distanceKm: number | null;
 }
 
+/** 일반 명사에 가까운 한 글자 키워드('회')는 근거로 치되 약하게 본다. */
+const WEAK_KEYWORD_SCORE = 20;
+const STRONG_KEYWORD_SCORE = 50;
+
+/**
+ * 거리의 대표 먹거리가 이 음식과 실제로 겹치는지 본다.
+ *
+ * 겹치는 방향은 "거리 키워드 ⊂ 음식"만 인정한다. 반대 방향(재료 ⊂ 키워드)까지
+ * 열어 두면 법성포 굴비거리가 '굴'을, 보리굴비가 '보리'를 물어 온다 — 글자만
+ * 겹칠 뿐 다른 음식이다. 실제 데이터에서 그 방향으로 잡힌 14건이 전부 오탐이었다.
+ */
+function keywordHit(food: Food, street: Street): { keyword: string; score: number } | null {
+  for (const kw of street.foodKeywords) {
+    // 재료가 키워드를 품는다: 장어거리 ↔ 붕장어. 가장 곧은 근거다.
+    if (food.ingredient && food.ingredient.includes(kw)) {
+      return { keyword: kw, score: STRONG_KEYWORD_SCORE };
+    }
+    // 메뉴 이름이 키워드를 품는다: 게장백반거리 ↔ 갈치조림+돌게장정식.
+    // 매칭된 제철 재료가 달라도 그 거리에서 파는 음식인 것은 맞다.
+    if (food.name.includes(kw)) {
+      return { keyword: kw, score: kw.length >= 2 ? STRONG_KEYWORD_SCORE : WEAK_KEYWORD_SCORE };
+    }
+  }
+  return null;
+}
+
 /**
  * 하나의 추천 음식에 어울리는 특화거리를 점수순으로 돌려준다.
  *
- * 키워드 일치가 가장 강한 신호다. "낙지"를 추천받은 사람에게 무안뻘낙지거리를
- * 보여 주는 것이, 단지 가깝다는 이유로 다른 거리를 보여 주는 것보다 쓸모 있다.
+ * **대표 먹거리가 겹치는 거리만 후보로 둔다.** 예전에는 키워드가 하나도 안
+ * 맞아도 같은 시·군·구(30점)나 시·도(10점)+점포수 가산만으로 문턱을 넘어서,
+ * 홍어찜에 장성읍 먹거리타운(애호박·돼지고기)이, 갈치찜에 무안뻘낙지거리가
+ * 붙었다. 추천 465건 중 178건이 그런 식이었다. 가깝다는 것은 이미 맞는 거리
+ * 여럿을 줄 세울 때 쓸 근거이지, 상관없는 거리를 끌어올 근거가 아니다.
+ *
+ * 그래서 여기서 아무것도 안 나오는 것이 정상이다. 부르는 쪽은 거리 대신
+ * 그 음식을 실제로 파는 집을 보여 준다.
  */
 export function matchStreets(food: Food, streets: Street[], limit = 3): StreetMatch[] {
   const foodStreets = streets.filter((s) => s.category === "음식");
@@ -429,27 +656,21 @@ export function matchStreets(food: Food, streets: Street[], limit = 3): StreetMa
     .filter((r) => r.lat !== null && r.lon !== null)
     .map((r) => ({ lat: r.lat as number, lon: r.lon as number }));
 
-  const matches = foodStreets.map<StreetMatch>((street) => {
-    const reasons: string[] = [];
-    let score = 0;
+  const matches: StreetMatch[] = [];
 
-    const hitKeyword = street.foodKeywords.find(
-      (kw) =>
-        food.ingredient.includes(kw) || kw.includes(food.ingredient) || food.name.includes(kw),
-    );
-    if (hitKeyword) {
-      score += 50;
-      reasons.push(`${hitKeyword} 전문 거리`);
-    }
+  for (const street of foodStreets) {
+    const hit = keywordHit(food, street);
+    if (!hit) continue;
 
+    // 같은 시·군·구에 있는 거리만 붙인다. 키워드만 보면 순천에서 파는 표고
+    // 골동면이 '표고' 때문에 여수 거리에, 여수 전복순두부가 '전복' 때문에
+    // 완도 거리에 붙는다. 카드에 뜬 지역과 거리가 어긋나면, 그건 갈 수 없는
+    // 안내다. 재료가 겹쳐도 그 동네 거리가 아니면 소용없다.
     const sameSigungu = food.regions.some((r) => street.sigungu && r.includes(street.sigungu));
-    const sameSido = food.regions.some((r) => r.startsWith(street.sido));
-    if (sameSigungu) {
-      score += 30;
-      reasons.push(`${street.sigungu} 안에 있음`);
-    } else if (sameSido) {
-      score += 10;
-    }
+    if (!sameSigungu) continue;
+
+    const reasons: string[] = [`${hit.keyword} 전문 거리`, `${street.sigungu} 안에 있음`];
+    let score = hit.score + 30;
 
     let distanceKm: number | null = null;
     if (street.lat !== null && street.lon !== null && coords.length > 0) {
@@ -470,13 +691,10 @@ export function matchStreets(food: Food, streets: Street[], limit = 3): StreetMa
     }
 
     score += Math.min(6, Math.log10(Math.max(1, street.shopCount)) * 3);
-    return { street, score, reasons, distanceKm };
-  });
+    matches.push({ street, score, reasons, distanceKm });
+  }
 
-  return matches
-    .filter((m) => m.score >= 15)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit);
+  return matches.sort((a, b) => b.score - a.score).slice(0, limit);
 }
 
 export interface StreetAggregate {
@@ -516,6 +734,36 @@ export function aggregateStreets(
     .slice(0, limit);
 }
 
+/** 대표 먹거리가 겹치는 거리가 없어, 파는 집으로 안내해야 하는 추천 음식. */
+export interface FoodShops {
+  food: Food;
+  match: number;
+  shops: Restaurant[];
+}
+
+/**
+ * 추천 음식 중 연결되는 특화거리가 없는 것만 골라, 그 음식을 파는 집을 붙인다.
+ *
+ * 특화거리는 광주·전남을 통틀어 20곳뿐이라 대부분의 제철 음식에는 짝이 없다.
+ * 짝이 없을 때 억지로 거리를 붙이는 대신 이 목록으로 넘긴다. 향토음식점으로
+ * 등록된 곳을 앞세운다 — 같은 음식이면 그쪽이 찾아갈 이유가 분명하다.
+ */
+export function foodsWithoutStreet(
+  scored: ScoredFood[],
+  streets: Street[],
+  shopLimit = 3,
+): FoodShops[] {
+  const out: FoodShops[] = [];
+  for (const item of scored) {
+    if (matchStreets(item.food, streets, 1).length > 0) continue;
+    const shops = [...item.food.restaurants]
+      .sort((a, b) => Number(b.isLocalSpecialty) - Number(a.isLocalSpecialty))
+      .slice(0, shopLimit);
+    if (shops.length > 0) out.push({ food: item.food, match: item.match, shops });
+  }
+  return out;
+}
+
 // --------------------------------------------------------------------------
 // 위치 기반 — 내 자리에서 가까운 순
 // --------------------------------------------------------------------------
@@ -527,6 +775,17 @@ export interface FoodSpot {
   lat: number;
   lon: number;
 }
+
+/**
+ * 카드 하단에 걸 목적지.
+ *
+ * 그 음식을 대표하는 특화거리가 있으면 거리로, 없으면 실제로 파는 집으로
+ * 보낸다. 거리가 없다고 아무 거리나 붙이지 않는다 — 그게 이 서비스가
+ * 홍어찜에 애호박 거리를 추천하던 이유였다.
+ */
+export type BestPlace =
+  | { kind: "street"; id: string; name: string }
+  | { kind: "restaurant"; name: string; area: string; count: number };
 
 /**
  * 거리 계산을 브라우저에서 하려고 클라이언트로 넘기는 최소 정보.
@@ -553,17 +812,28 @@ export interface NearbyCandidate {
   mismatches: string[];
   /** 같은 재료 상한에 걸려 점수보다 뒤로 밀렸으면 true. */
   demoted: boolean;
-  /** 취향순 카드에 거는 특화거리 링크. 서버에서 미리 골라 둔다. */
-  bestStreet: { id: string; name: string } | null;
+  /** 취향순 카드에 거는 목적지. 서버에서 미리 골라 둔다. */
+  bestPlace: BestPlace | null;
   spots: FoodSpot[];
+}
+
+/**
+ * 그 음식을 대표할 집 하나를 고른다. 향토음식점으로 등록된 곳을 앞세우고,
+ * 없으면 첫 집을 쓴다. 어느 쪽이든 카드에는 총 몇 곳인지를 함께 적는다.
+ */
+function pickRestaurant(food: Food): BestPlace | null {
+  const shops = food.restaurants;
+  if (shops.length === 0) return null;
+  const pick = shops.find((r) => r.isLocalSpecialty) ?? shops[0];
+  return { kind: "restaurant", name: pick.name, area: pick.area, count: shops.length };
 }
 
 /**
  * 취향순으로 정렬된 후보를 클라이언트가 쓸 형태로 줄인다.
  *
- * `linkLimit`은 특화거리 링크를 붙일 개수다. 이 링크는 취향순 카드에만
- * 나오고 취향순은 언제나 앞에서부터 자르므로, 뒤쪽 후보까지 거리를
- * 매칭해 봐야 payload만 늘고 화면에는 안 나온다.
+ * `linkLimit`은 목적지를 붙일 개수다. 이 링크는 취향순 카드에만 나오고
+ * 취향순은 언제나 앞에서부터 자르므로, 뒤쪽 후보까지 거리를 매칭해 봐야
+ * payload만 늘고 화면에는 안 나온다.
  */
 export function toNearbyCandidates(
   scored: ScoredFood[],
@@ -571,7 +841,15 @@ export function toNearbyCandidates(
   linkLimit = 4,
 ): NearbyCandidate[] {
   return scored.map((item, index) => {
-    const best = index < linkLimit ? matchStreets(item.food, streets, 1)[0] : undefined;
+    // 대표 먹거리가 겹치는 거리가 있을 때만 거리로 보낸다. 없으면 그 음식을
+    // 실제로 파는 집을 가리킨다 — 상관없는 거리로 보내는 것보다 쓸모 있다.
+    const street = index < linkLimit ? matchStreets(item.food, streets, 1)[0] : undefined;
+    const bestPlace: BestPlace | null =
+      index >= linkLimit
+        ? null
+        : street
+          ? { kind: "street", id: street.street.id, name: streetDisplayName(street.street) }
+          : pickRestaurant(item.food);
     return {
       id: item.food.id,
       name: item.food.name,
@@ -587,9 +865,7 @@ export function toNearbyCandidates(
       inSeason: item.inSeason,
       mismatches: item.mismatches,
       demoted: item.demoted,
-      bestStreet: best
-        ? { id: best.street.id, name: streetDisplayName(best.street) }
-        : null,
+      bestPlace,
       spots: item.food.restaurants
         .filter((r) => r.lat !== null && r.lon !== null)
         .map((r) => ({

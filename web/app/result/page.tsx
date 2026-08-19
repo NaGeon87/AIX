@@ -3,18 +3,24 @@ import Link from "next/link";
 import { FoodRecommendations } from "@/components/FoodRecommendations";
 import { type MapMarker } from "@/components/RegionMap";
 import { foods, streets } from "@/lib/data";
-import { streetDisplayName } from "@/lib/korean";
+import { streetDisplayName, withParticle } from "@/lib/korean";
 import {
   aggregateStreets,
   preferenceFromQuery,
   preferenceToQuery,
+  randomSeed,
   rankCandidates,
+  substitutionNotice,
   toNearbyCandidates,
 } from "@/lib/recommend";
 import { CATEGORY_META, RAW_COLOR, SOUP_COLOR, SPICY_COLOR, SPICY_LEVELS } from "@/lib/types";
 
 /** 결과에 보여 줄 음식 개수. */
 const FOOD_LIMIT = 4;
+
+// 매번 다르게 뽑으므로 캐시에 걸리면 안 된다. 캐시된 응답을 다시 주면
+// 새로고침해도 같은 상이 나와, 다르게 나오게 한 뜻이 사라진다.
+export const dynamic = "force-dynamic";
 
 export default async function ResultPage({
   searchParams,
@@ -26,9 +32,19 @@ export default async function ResultPage({
 
   // 제철 후보를 전부 취향순으로 세워 클라이언트로 넘긴다. 상위 몇 개만
   // 넘기면 "가까운 순"이 취향으로 한 번 거른 뒤의 순서가 되어 버린다.
-  const ranked = rankCandidates(foods, pref);
+  // 씨앗이 주소에 실려 오면 그것을 쓰고, 없으면 새로 뽑는다. 그냥 들어오면
+  // 매번 다른 상을 받고, 공유받은 링크로 들어오면 보낸 사람과 같은 상을 본다.
+  const shared = typeof query.seed === "string" ? query.seed : "";
+  const seed = shared || randomSeed();
+  const ranked = rankCandidates(foods, pref, seed);
   const candidates = toNearbyCandidates(ranked, streets, FOOD_LIMIT);
-  const topStreets = aggregateStreets(ranked.slice(0, FOOD_LIMIT), streets, 4);
+  const shown = ranked.slice(0, FOOD_LIMIT);
+  // 추천이 대표 먹거리로 내건 특화거리. 지도 위 거리 핀이자, 그 핀을 누르면
+  // 가는 상세 페이지 목록이다. 절로 따로 나열하지는 않는다.
+  const topStreets = aggregateStreets(shown, streets, 6);
+  // 조건을 그대로 만족하는 음식이 없으면 목록 위에서 먼저 밝힌다. 카드마다
+  // "다만 ~"으로만 흘리면 네 장을 다 펼쳐 봐야 알 수 있다.
+  const notice = substitutionNotice(ranked, pref);
 
   // 특화거리 마커는 취향 기준으로 고정한다. 아래 "가 볼 만한 특화거리"
   // 절과 같은 목록이어야 지도와 목록이 서로를 설명한다.
@@ -47,30 +63,27 @@ export default async function ResultPage({
 
   return (
     <main className="mx-auto min-h-dvh w-full max-w-[520px] bg-canvas pb-12">
-      <header className="bg-ink px-6 pb-5 pt-11 text-fg-inverse">
+      {/* 지도가 주인공이라 헤더는 얇은 앱바로 줄인다. 제목·취향은 한 줄에
+          몰아 넣고, 채점 안내 문단은 뺀다(카드에서 펼쳐 볼 수 있다). */}
+      <header className="bg-ink px-5 py-3 text-fg-inverse">
         <div className="flex items-center justify-between gap-3">
           <Link
             href="/taste"
-            className="block w-fit text-[13px] text-[#b8afa6] transition-colors hover:text-fg-inverse"
+            className="shrink-0 text-[13px] text-[#b8afa6] transition-colors hover:text-fg-inverse"
           >
-            ← 취향 다시 고르기
+            ← 다시
           </Link>
+          <h1 className="font-display truncate text-[16px]">
+            {pref.month}월의 남도, {Math.min(ranked.length, FOOD_LIMIT)}가지
+          </h1>
           <Link
             href="/how"
-            className="shrink-0 rounded-full border border-[#4a423a] px-2.5 py-1 text-[11px] font-bold text-[#b8afa6] transition-colors hover:border-fg-inverse hover:text-fg-inverse"
+            className="shrink-0 text-[12px] font-bold text-[#b8afa6] transition-colors hover:text-fg-inverse"
           >
             추천 방식
           </Link>
         </div>
-        <h1 className="font-display mt-2 text-[26px] leading-tight">
-          {pref.month}월의 남도, {Math.min(ranked.length, FOOD_LIMIT)}가지
-        </h1>
-        <p className="mt-1.5 text-[12px] leading-relaxed text-[#b8afa6]">
-          {pref.month}월 제철 후보 {ranked.length}가지를 아래 취향으로 채점했습니다. 카드마다
-          <b className="font-bold text-fg-inverse"> ‘왜 이 음식인가요?’</b>를 펼치면 점수가
-          어떻게 나왔는지 볼 수 있습니다.
-        </p>
-        <div className="mt-3 flex flex-wrap gap-1.5">
+        <div className="mt-2 flex flex-wrap gap-1.5">
           <Chip color={SPICY_COLOR} label={`맵기 ${spicyLabel}`} />
           <Chip
             color={SOUP_COLOR}
@@ -94,66 +107,92 @@ export default async function ResultPage({
         <EmptyState />
       ) : (
         <>
+          {(notice.substituted || notice.outOfSeasonOnly) && (
+            <SubstitutionBanner
+              month={pref.month}
+              substituted={notice.substituted}
+              unmet={notice.unmet}
+            />
+          )}
+
           <FoodRecommendations
             candidates={candidates}
             streetMarkers={streetMarkers}
             pref={pref}
             prefQuery={preferenceToQuery(pref)}
+            seed={seed}
             limit={FOOD_LIMIT}
           />
-
-          <section className="px-5 pt-7">
-            <h2 className="font-display text-[20px]">가 볼 만한 특화거리</h2>
-            <p className="mt-1 text-[12px] text-fg-muted">
-              취향에 맞는 음식들이 실제로 모여 있는 거리를 득표순으로 모았습니다.
-            </p>
-            <ol className="mt-3 space-y-2.5">
-              {topStreets.map((agg, index) => (
-                <li key={agg.street.id}>
-                  <Link
-                    href={`/street/${agg.street.id}?${preferenceToQuery(pref)}`}
-                    className="street-card flex items-center gap-3 rounded-2xl border-y border-r border-line bg-surface px-4 py-3.5"
-                  >
-                    <span className="font-display flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-soft text-[16px] text-brand">
-                      {index + 1}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-baseline justify-between gap-3">
-                        <h3 className="font-display truncate text-[18px]">
-                          {streetDisplayName(agg.street)}
-                        </h3>
-                        <span className="shrink-0 text-[12px] text-fg-muted">
-                          점포 {agg.street.shopCount}곳
-                        </span>
-                      </div>
-                      <p className="mt-0.5 text-[12px] text-fg-muted">
-                        {agg.street.sido} {agg.street.sigungu}
-                      </p>
-                      <p className="mt-1.5 truncate text-[12px] text-accent">
-                        {agg.foods.map((f) => f.name).join(" · ")}
-                      </p>
-                    </div>
-                    <span
-                      className="street-card-arrow shrink-0 text-[20px] text-fg-muted"
-                      aria-hidden="true"
-                    >
-                      →
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ol>
-            {topStreets.length === 0 && (
-              <p className="mt-3 rounded-2xl border border-line bg-surface-alt px-4 py-6 text-center text-[13px] text-fg-muted">
-                추천된 음식과 연결되는 특화거리를 찾지 못했습니다.
-                <br />
-                취향을 조금 바꿔 보세요.
-              </p>
-            )}
-          </section>
+          {/* '가 볼 만한 특화거리'·'파는 집' 절은 여기 없다. 거리·점포 정보는
+              지도의 거리 핀을 눌러 들어간 상세 페이지에서만 본다. */}
         </>
       )}
     </main>
+  );
+}
+
+/**
+ * 조건에 맞는 음식이 없을 때 목록 위에 세우는 알림.
+ *
+ * 점수만 보면 "취향 일치 98"이라 조건을 다 맞춘 것처럼 읽힌다. 그 점수는
+ * "상관없음"을 뺀 나머지 배점의 비율이라 조건이 어긋나도 높게 나온다. 그래서
+ * 대체 추천이라는 사실을 목록보다 먼저, 못 맞춘 조건까지 짚어서 밝힌다.
+ */
+function SubstitutionBanner({
+  month,
+  substituted,
+  unmet,
+}: {
+  month: number;
+  substituted: boolean;
+  unmet: string[];
+}) {
+  return (
+    <section className="px-5 pt-4">
+      <div
+        role="alert"
+        className="overflow-hidden rounded-2xl border-2 border-brand bg-surface"
+      >
+        <div className="flex items-start gap-2.5 bg-brand px-4 py-3">
+          <span aria-hidden="true" className="text-[20px] leading-none">
+            ⚠️
+          </span>
+          <div className="min-w-0">
+            <p className="font-display text-[19px] leading-tight text-fg-inverse">
+              대체 추천입니다
+            </p>
+            <p className="mt-1 text-[13px] font-bold leading-snug text-fg-inverse">
+              {substituted
+                ? "고른 조건에 맞는 음식이 없습니다"
+                : `${month}월 제철 중에는 조건에 맞는 음식이 없습니다`}
+            </p>
+          </div>
+        </div>
+        <p className="px-4 py-3 text-[12px] leading-relaxed text-fg">
+          {substituted ? (
+            <>
+              {month}월 후보 중 <b className="font-bold">조건을 모두 만족하는 음식이 하나도 없어</b>,
+              아래는 조건에 <b className="font-bold">가장 가까운 음식</b>을 대신 고른 것입니다.
+              {unmet.length > 0 && (
+                <>
+                  {" "}
+                  특히 <b className="font-bold text-brand">{unmet.join("·")}</b>
+                  {withParticle(unmet[unmet.length - 1], "은/는").slice(-1)} 어떤 후보도
+                  맞추지 못했습니다.
+                </>
+              )}{" "}
+              카드의 <b className="font-bold text-brand">대체 추천</b> 표시와 ‘다만 …’ 줄에서
+              어느 조건이 어긋났는지 확인하실 수 있습니다.
+            </>
+          ) : (
+            <>
+              조건에 맞는 음식은 있으나 {month}월 제철이 아닙니다. 앞뒤 한 달의 제철까지
+              넓혀 <b className="font-bold">대신 추천</b>합니다.
+            </>
+          )}
+        </p>
+      </div>
+    </section>
   );
 }
 

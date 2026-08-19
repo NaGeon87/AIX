@@ -20,6 +20,13 @@ NFQS_API_KEY = os.getenv("NFQS_API_KEY", "")
 # 맛 프로파일 LLM 보정(src/taste/llm_refine.py)에만 쓴다. 없어도 파이프라인은 돈다.
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
+# 화면이 받은 지표 정확도 피드백을 되읽을 때만 쓴다(src/taste/feedback_review.py).
+# 넣기는 anon 키로 열려 있지만 읽기는 RLS로 닫아 두었으므로 service_role이 필요하다.
+# 웹앱과 이름을 맞춰 둔다 — 같은 프로젝트를 가리키는 값이 두 이름으로 갈리면
+# 어느 쪽이 진짜인지 나중에 알 수 없다.
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+
 DATA_RAW_DIR.mkdir(parents=True, exist_ok=True)
 DATA_PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 DATA_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
