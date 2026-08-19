@@ -24,8 +24,24 @@ function spicyText(level: number) {
   return ["안 매움", "약간 매움", "매움", "아주 매움"][level] ?? `${level}`;
 }
 
-function restaurantMatchesLocation(restaurant: Food["restaurants"][number], intent: { region?: string; area?: string } | null) {
+type LocationIntent = {
+  region?: string;
+  area?: string;
+  label?: string;
+  excludeRegions?: string[];
+  excludeAreas?: string[];
+};
+
+function restaurantMatchesLocation(restaurant: Food["restaurants"][number], intent: LocationIntent | null) {
   if (!intent) return true;
+  if (intent.excludeRegions?.includes(restaurant.region)) return false;
+  if (intent.excludeAreas?.length) {
+    const area = restaurant.area.replace(/\s+/g, "");
+    if (intent.excludeAreas.some((excluded) => {
+      const wanted = excluded.replace(/\s+/g, "");
+      return area.includes(wanted) || wanted.includes(area);
+    })) return false;
+  }
   if (intent.region && restaurant.region !== intent.region) return false;
   if (intent.area) {
     const area = restaurant.area.replace(/\s+/g, "");
@@ -64,7 +80,7 @@ export function MapChatExplorer({
   const [categoryResult, setCategoryResult] = useState<CategoryRecommendationResult | null>(null);
   const [categoryRound, setCategoryRound] = useState(0);
   const [categorySeenFoodIds, setCategorySeenFoodIds] = useState<string[]>([]);
-  const [locationIntent, setLocationIntent] = useState<{ region?: string; area?: string; label?: string } | null>(null);
+  const [locationIntent, setLocationIntent] = useState<LocationIntent | null>(null);
 
   const selectedStreet = useMemo(
     () => streets.find((street) => street.id === selectedId),
@@ -254,7 +270,7 @@ export function MapChatExplorer({
         reply?: string;
         foodIds?: string[];
         understood?: string[];
-        location?: { region?: string; area?: string; label?: string } | null;
+        location?: LocationIntent | null;
       };
       const ids = data.foodIds ?? [];
       const intent = data.location ?? null;
