@@ -6,7 +6,11 @@ import { useMemo, useState } from "react";
 import { CategoryTastePanel } from "@/components/CategoryTastePanel";
 import { RegionMap, type MapMarker } from "@/components/RegionMap";
 import { seasonNote } from "@/lib/season-notes";
+import { parseTasteText } from "@/lib/parse-taste";
 import {
+  DEFAULT_PREFERENCE,
+  INGREDIENT_DUPLICATE_PENALTY,
+  explainMatch,
   randomSeed,
   recommendByExactCategory,
   type CategoryRecommendationResult,
@@ -56,6 +60,7 @@ export function MapChatExplorer({
   const [inputMode, setInputMode] = useState<"ai" | "category">("ai");
   const [lastCategoryPreference, setLastCategoryPreference] = useState<Preference | null>(null);
   const [expandedWhyIds, setExpandedWhyIds] = useState<string[]>([]);
+  const [expandedScoreIds, setExpandedScoreIds] = useState<string[]>([]);
   const [categoryResult, setCategoryResult] = useState<CategoryRecommendationResult | null>(null);
   const [locationIntent, setLocationIntent] = useState<{ region?: string; area?: string; label?: string } | null>(null);
 
@@ -80,6 +85,41 @@ export function MapChatExplorer({
         .filter(Boolean) as Food[],
     [recommendedFoodIds, foods],
   );
+
+  // 피드백용 점수 표시에 쓰는 현재 취향. 카테고리는 사용자가 고른 값을 그대로,
+  // 자연어는 로컬 파서가 읽은 명시 취향 + 기본값으로 계산한다.
+  const scoringPreference = useMemo<Preference | null>(() => {
+    if (inputMode === "category") return lastCategoryPreference;
+    if (!lastTaste) return null;
+    const parsed = parseTasteText(lastTaste);
+    return {
+      ...DEFAULT_PREFERENCE,
+      month: parsed.pref.month ?? defaultMonth,
+      ...parsed.pref,
+    };
+  }, [inputMode, lastCategoryPreference, lastTaste, defaultMonth]);
+
+  const scoreBreakdownByFoodId = useMemo(() => {
+    const map = new Map<string, {
+      explanation: ReturnType<typeof explainMatch>;
+      duplicatePenalty: number;
+      duplicatedIngredient: boolean;
+    }>();
+    if (!scoringPreference) return map;
+
+    const seenIngredients = new Set<string>();
+    for (const food of recommendedFoods) {
+      const ingredient = food.ingredient || food.name;
+      const duplicatedIngredient = seenIngredients.has(ingredient);
+      map.set(food.id, {
+        explanation: explainMatch(scoringPreference, food),
+        duplicatePenalty: duplicatedIngredient ? INGREDIENT_DUPLICATE_PENALTY : 0,
+        duplicatedIngredient,
+      });
+      seenIngredients.add(ingredient);
+    }
+    return map;
+  }, [recommendedFoods, scoringPreference]);
 
   const categoryScoreByFoodId = useMemo(() => {
     const map = new Map<string, CategoryRecommendationResult["alternatives"][number]>();
@@ -176,6 +216,7 @@ export function MapChatExplorer({
     const result = recommendByExactCategory(foods, pref, 5, randomSeed());
     setCategoryResult(result);
     setExpandedWhyIds([]);
+    setExpandedScoreIds([]);
     setLocationIntent(null);
     const shown = result.exact.length > 0 ? result.exact : result.alternatives;
     const ids = shown.map((item) => item.food.id);
@@ -210,6 +251,7 @@ export function MapChatExplorer({
       const intent = data.location ?? null;
       setRecommendedFoodIds(ids);
       setExpandedWhyIds([]);
+      setExpandedScoreIds([]);
       setLocationIntent(intent);
 
       // 사용자가 지역을 말했으면 그 지역 식당 좌표를 우선 선택한다.
@@ -248,6 +290,7 @@ export function MapChatExplorer({
     setRecommendedFoodIds([]);
     setCategoryResult(null);
     setExpandedWhyIds([]);
+    setExpandedScoreIds([]);
     setLocationIntent(null);
     setSelectedId(undefined);
   };
@@ -574,6 +617,78 @@ export function MapChatExplorer({
                           );
                         })()}
                       </div>
+
+                      {scoreBreakdownByFoodId.get(food.id) && (
+                        <div className="mt-2">
+                          <button
+                            type="button"
+                            aria-expanded={expandedScoreIds.includes(food.id)}
+                            onClick={() =>
+                              setExpandedScoreIds((current) =>
+                                current.includes(food.id)
+                                  ? current.filter((id) => id !== food.id)
+                                  : [...current, food.id],
+                              )
+                            }
+                            className="flex w-full items-center justify-between rounded-xl border border-line bg-surface px-3 py-2.5 text-left transition hover:border-line-strong"
+                          >
+                            <span className="text-[11px] font-bold text-fg-muted">점수 산정 방식 보기 · 피드백용</span>
+                            <span
+                              aria-hidden="true"
+                              className={`text-[12px] text-fg-muted transition-transform ${
+                                expandedScoreIds.includes(food.id) ? "rotate-180" : ""
+                              }`}
+                            >
+                              ▾
+                            </span>
+                          </button>
+
+                          {expandedScoreIds.includes(food.id) && (() => {
+                            const scoreInfo = scoreBreakdownByFoodId.get(food.id);
+                            if (!scoreInfo) return null;
+                            const { explanation, duplicatePenalty, duplicatedIngredient } = scoreInfo;
+                            const axisOrder = ["raw", "ingredient", "soup", "spicy"] as const;
+                            const axes = axisOrder
+                              .map((key) => explanation.axes.find((axis) => axis.key === key))
+                              .filter((axis): axis is NonNullable<typeof axis> => Boolean(axis));
+
+                            return (
+                              <div className="rounded-b-xl border-x border-b border-line bg-surface-alt px-3 py-3">
+                                <div className="flex items-center justify-between gap-3">
+                                  <p className="text-[11px] font-bold text-fg">취향 점수 {explanation.score}점</p>
+                                  <p className="text-[10px] text-fg-muted">우선순위: 날것/익힘 → 주재료 → 국물 → 맵기</p>
+                                </div>
+                                <div className="mt-2 space-y-1.5">
+                                  {axes.map((axis) => (
+                                    <div key={axis.key} className="grid grid-cols-[72px_58px_1fr] items-start gap-2 text-[10px]">
+                                      <span className="font-bold text-fg">{axis.label}</span>
+                                      <span className="tabular-nums text-fg-muted">
+                                        {axis.verdict === "skipped"
+                                          ? "채점 제외"
+                                          : `${Math.round(axis.earned)}/${axis.weight}점`}
+                                      </span>
+                                      <span className="leading-relaxed text-fg-muted">{axis.note}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                                <div className="mt-3 border-t border-line pt-2 text-[10px] leading-relaxed text-fg-muted">
+                                  <p>근거 신뢰도 보정 × {explanation.credibility.toFixed(2)} → 취향 점수 {explanation.score}점</p>
+                                  <p className={duplicatedIngredient ? "mt-1 font-bold text-brand" : "mt-1"}>
+                                    식재료 다양성 패널티: {duplicatePenalty > 0 ? `-${duplicatePenalty}점` : "0점"}
+                                    {duplicatedIngredient ? ` · 앞선 추천에 ${food.ingredient || food.name} 재료가 이미 있어 감점` : " · 앞선 추천과 핵심 식재료 중복 없음"}
+                                  </p>
+                                  {inputMode === "ai" && (
+                                    <p className="mt-1">
+                                      자연어 모드에서는 이 점수로 후보를 만들고, 외부 LLM의 문맥 판단과 식재료 다양성 보정을 함께 사용해 최종 순서를 결정합니다.
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      )}
+
                       <div className="mt-2.5 flex flex-wrap gap-2">
                       {firstFoodMarkerByFoodId.get(food.id) ? (
                         <button
