@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 
 import { CategoryTastePanel } from "@/components/CategoryTastePanel";
 import { RegionMap, type MapMarker } from "@/components/RegionMap";
+import { seasonNote } from "@/lib/season-notes";
 import {
   randomSeed,
   recommendByExactCategory,
@@ -54,9 +55,8 @@ export function MapChatExplorer({
   const [lastTaste, setLastTaste] = useState("");
   const [inputMode, setInputMode] = useState<"ai" | "category">("ai");
   const [lastCategoryPreference, setLastCategoryPreference] = useState<Preference | null>(null);
-  const [expandedReasonIds, setExpandedReasonIds] = useState<string[]>([]);
+  const [expandedWhyIds, setExpandedWhyIds] = useState<string[]>([]);
   const [categoryResult, setCategoryResult] = useState<CategoryRecommendationResult | null>(null);
-  const [recommendationReasons, setRecommendationReasons] = useState<Record<string, string>>({});
   const [locationIntent, setLocationIntent] = useState<{ region?: string; area?: string; label?: string } | null>(null);
 
   const selectedStreet = useMemo(
@@ -175,8 +175,7 @@ export function MapChatExplorer({
     setLastCategoryPreference(pref);
     const result = recommendByExactCategory(foods, pref, 5, randomSeed());
     setCategoryResult(result);
-    setRecommendationReasons({});
-    setExpandedReasonIds([]);
+    setExpandedWhyIds([]);
     setLocationIntent(null);
     const shown = result.exact.length > 0 ? result.exact : result.alternatives;
     const ids = shown.map((item) => item.food.id);
@@ -204,15 +203,13 @@ export function MapChatExplorer({
       const data = (await response.json()) as {
         reply?: string;
         foodIds?: string[];
-        reasons?: Record<string, string>;
         understood?: string[];
         location?: { region?: string; area?: string; label?: string } | null;
       };
       const ids = data.foodIds ?? [];
       const intent = data.location ?? null;
       setRecommendedFoodIds(ids);
-      setExpandedReasonIds([]);
-      setRecommendationReasons(data.reasons ?? {});
+      setExpandedWhyIds([]);
       setLocationIntent(intent);
 
       // 사용자가 지역을 말했으면 그 지역 식당 좌표를 우선 선택한다.
@@ -250,8 +247,7 @@ export function MapChatExplorer({
     setInputMode((mode) => (mode === "ai" ? "category" : "ai"));
     setRecommendedFoodIds([]);
     setCategoryResult(null);
-    setRecommendationReasons({});
-    setExpandedReasonIds([]);
+    setExpandedWhyIds([]);
     setLocationIntent(null);
     setSelectedId(undefined);
   };
@@ -513,46 +509,72 @@ export function MapChatExplorer({
                             대체 추천 차이 · {categoryScoreByFoodId.get(food.id)?.mismatches.join(" · ")}
                           </p>
                         )}
-                      {recommendationReasons[food.id] && (
-                        <div className="mt-2">
-                          <button
-                            type="button"
-                            aria-expanded={expandedReasonIds.includes(food.id)}
-                            onClick={() =>
-                              setExpandedReasonIds((current) =>
-                                current.includes(food.id)
-                                  ? current.filter((id) => id !== food.id)
-                                  : [...current, food.id],
-                              )
-                            }
-                            className="flex w-full items-center justify-between rounded-xl border border-accent/25 bg-accent-soft px-3 py-2.5 text-left transition hover:border-accent/50"
-                          >
-                            <span className="text-[11px] font-bold text-accent">AI 선정 이유 보기</span>
-                            <span
-                              aria-hidden="true"
-                              className={`text-[12px] text-accent transition-transform ${
-                                expandedReasonIds.includes(food.id) ? "rotate-180" : ""
-                              }`}
-                            >
-                              ▾
-                            </span>
-                          </button>
-                          {expandedReasonIds.includes(food.id) && (
-                            <div className="rounded-b-xl border-x border-b border-accent/25 bg-surface px-3 py-2.5">
-                              <p className="text-[11px] leading-relaxed text-fg">
-                                {recommendationReasons[food.id]}
-                              </p>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      <div className="mt-2.5 flex flex-wrap gap-2">
-                        <Link
-                          href={`/food/${food.id}${locationIntent?.label ? `?place=${encodeURIComponent(locationIntent.label)}` : ""}`}
-                          className="rounded-lg bg-brand px-3 py-1.5 text-[11px] font-bold text-fg-inverse transition hover:opacity-90"
+                      <div className="mt-2">
+                        <button
+                          type="button"
+                          aria-expanded={expandedWhyIds.includes(food.id)}
+                          onClick={() =>
+                            setExpandedWhyIds((current) =>
+                              current.includes(food.id)
+                                ? current.filter((id) => id !== food.id)
+                                : [...current, food.id],
+                            )
+                          }
+                          className="flex w-full items-center justify-between rounded-xl border border-accent/25 bg-accent-soft px-3 py-2.5 text-left transition hover:border-accent/50"
                         >
-                          음식 자세히 보기 →
-                        </Link>
+                          <span className="text-[11px] font-bold text-accent">WHY NOW · WHERE 보기</span>
+                          <span
+                            aria-hidden="true"
+                            className={`text-[12px] text-accent transition-transform ${
+                              expandedWhyIds.includes(food.id) ? "rotate-180" : ""
+                            }`}
+                          >
+                            ▾
+                          </span>
+                        </button>
+                        {expandedWhyIds.includes(food.id) && (() => {
+                          const note = seasonNote(food.ingredient);
+                          const matchedRestaurants = locationIntent
+                            ? food.restaurants.filter((restaurant) =>
+                                restaurantMatchesLocation(restaurant, locationIntent),
+                              )
+                            : food.restaurants;
+                          const regionSource = matchedRestaurants.length
+                            ? matchedRestaurants
+                            : food.restaurants;
+                          const regions = Array.from(
+                            new Set(
+                              regionSource.map(
+                                (restaurant) => `${restaurant.region} ${restaurant.area}`,
+                              ),
+                            ),
+                          );
+                          const whyNow =
+                            note?.when ??
+                            (food.months.length > 0
+                              ? `${food.ingredient}은(는) 현재 데이터에서 ${food.months.join("·")}월 제철 재료로 연결되어 있습니다. 구체적인 생태·수확 근거는 데이터에 없어 임의로 덧붙이지 않았습니다.`
+                              : "이 음식은 현재 데이터에서 특정 제철 월이 명확히 연결되어 있지 않습니다. 계절보다 취향과 지역성을 중심으로 보시는 편이 좋습니다.");
+                          const whyWhere =
+                            note?.where ??
+                            (regions.length > 0
+                              ? `현재 음식 데이터에는 ${regions.slice(0, 5).join(", ")} 등에 이 메뉴를 취급하는 식당이 등록되어 있습니다. 지역 고유의 유래나 산지 근거가 별도 데이터로 확인되지 않아 그 이상은 추정하지 않습니다.`
+                              : "현재 등록된 식당 지역 정보가 부족해 특정 지역에서 먹어야 하는 근거를 확인하기 어렵습니다.");
+
+                          return (
+                            <div className="space-y-3 rounded-b-xl border-x border-b border-accent/25 bg-surface px-3 py-3">
+                              <div>
+                                <p className="text-[10px] font-bold tracking-[0.08em] text-brand">WHY NOW</p>
+                                <p className="mt-1 text-[11px] leading-relaxed text-fg">{whyNow}</p>
+                              </div>
+                              <div className="border-t border-line pt-3">
+                                <p className="text-[10px] font-bold tracking-[0.08em] text-brand">WHERE</p>
+                                <p className="mt-1 text-[11px] leading-relaxed text-fg">{whyWhere}</p>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                      <div className="mt-2.5 flex flex-wrap gap-2">
                       {firstFoodMarkerByFoodId.get(food.id) ? (
                         <button
                           type="button"
