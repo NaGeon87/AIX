@@ -13,6 +13,12 @@ export interface MapMarker {
   kind: "street" | "restaurant" | "me" | "tourism";
   /** 강조할 마커. 라벨을 항상 띄운다. */
   highlight?: boolean;
+  /** 음식거리 대표 OpenMoji 코드. street 마커에서만 사용한다. */
+  iconCode?: string;
+  /** SVG를 불러오지 못했을 때 보여줄 대체 이모지 */
+  iconFallback?: string;
+  /** 대표 음식 이름 */
+  iconLabel?: string;
 }
 
 const STREET_COLOR = "#b23a22";
@@ -29,6 +35,36 @@ const MARKER_COLOR: Record<MapMarker["kind"], string> = {
   me: ME_COLOR,
   tourism: TOURISM_COLOR,
 };
+
+
+function buildFoodIcon(
+  leaflet: typeof L,
+  marker: MapMarker,
+  opts: { interactive?: boolean; selected?: boolean } = {},
+): L.DivIcon {
+  const size = opts.selected ? 52 : 44;
+  const inner = opts.selected ? 36 : 30;
+  const ring = opts.selected
+    ? "box-shadow:0 0 0 4px rgba(178,58,34,.18),0 5px 14px rgba(28,24,21,.28);border:3px solid #b23a22;"
+    : "box-shadow:0 3px 10px rgba(28,24,21,.22);border:2px solid rgba(255,255,255,.98);";
+  const cursor = opts.interactive ? "cursor:pointer;" : "";
+  const fallback = marker.iconFallback ?? "🍽️";
+  const img = marker.iconCode
+    ? `<img src="https://cdn.jsdelivr.net/npm/openmoji@17.0.0/color/svg/${marker.iconCode}.svg" alt="" style="position:absolute;inset:6px;width:${inner}px;height:${inner}px;object-fit:contain;" onerror="this.style.display='none'" />`
+    : "";
+
+  return leaflet.divIcon({
+    className: "region-map-food-icon",
+    html: `<span title="${marker.iconLabel ?? marker.label}" style="
+      position:relative;display:flex;align-items:center;justify-content:center;
+      width:${size}px;height:${size}px;border-radius:999px;background:rgba(255,255,255,.97);
+      ${ring}${cursor}
+      font-size:${opts.selected ? 26 : 22}px;line-height:1;
+    "><span aria-hidden="true" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;">${fallback}</span>${img}</span>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+  });
+}
 
 function buildDivIcon(
   leaflet: typeof L,
@@ -137,8 +173,11 @@ export function RegionMap({
         // onSelect가 있으면 내 위치를 뺀 핀은 누를 수 있다. 무엇으로 이어질지는
         // 부르는 쪽이 정한다(지금은 특화거리 핀 → 거리 상세).
         const clickable = Boolean(onSelectRef.current) && m.kind !== "me";
+        const markerIcon = m.kind === "street"
+          ? buildFoodIcon(leaflet, m, { interactive: clickable, selected: Boolean(m.highlight) })
+          : buildDivIcon(leaflet, color, size, { interactive: clickable });
         const marker = leaflet.marker([m.lat, m.lon], {
-          icon: buildDivIcon(leaflet, color, size, { interactive: clickable }),
+          icon: markerIcon,
           interactive: true,
           keyboard: false,
         });
@@ -153,7 +192,7 @@ export function RegionMap({
           marker.bindTooltip(m.label, {
             permanent: true,
             direction: "top",
-            offset: [0, -size / 2 - 4],
+            offset: [0, m.kind === "street" ? -30 : -size / 2 - 4],
             className: "region-map-label",
           });
         } else {
@@ -181,6 +220,20 @@ export function RegionMap({
   // 선택된 핀으로 지도를 옮기고 라벨을 연다. 지도 재생성과 분리해서,
   // 선택이 바뀌어도 확대·중심이 초기화되지 않는다.
   useEffect(() => {
+    const leaflet = leafletRef.current;
+    if (leaflet) {
+      // 선택이 바뀌어도 지도를 재생성하지 않고 음식 아이콘의 크기/테두리만 갱신한다.
+      for (const point of points) {
+        if (point.kind !== "street") continue;
+        const mapMarker = markerRefs.current.get(point.id);
+        if (!mapMarker) continue;
+        mapMarker.setIcon(buildFoodIcon(leaflet, point, {
+          interactive: Boolean(onSelectRef.current),
+          selected: point.id === selectedId,
+        }));
+      }
+    }
+
     if (!selectedId) return;
     const map = mapRef.current;
     const marker = markerRefs.current.get(selectedId);

@@ -84,6 +84,12 @@ export interface Street {
   lat: number | null;
   lon: number | null;
   coordSource: string;
+  /** 지도 음식 마커용 OpenMoji 코드. 예: 1F419(낙지/문어) */
+  iconCode?: string;
+  /** 아이콘 이미지가 로드되지 않을 때 보여줄 이모지 */
+  iconFallback?: string;
+  /** 대표 음식 접근성 라벨 */
+  iconLabel?: string;
   lengthM: number;
   shopCount: number;
   designatedYear: number | null;

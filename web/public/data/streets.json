@@ -20,7 +20,10 @@
     "orgName": "광주관광/광산구청",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F969",
+    "iconFallback": "🥩",
+    "iconLabel": "떡갈비"
   },
   {
     "id": "ST002",
@@ -43,7 +46,10 @@
     "orgName": "광주관광/동구청",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F35A",
+    "iconFallback": "🍚",
+    "iconLabel": "보리밥"
   },
   {
     "id": "ST003",
@@ -66,7 +72,10 @@
     "orgName": "광주광역시 북구청",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F986",
+    "iconFallback": "🦆",
+    "iconLabel": "오리"
   },
   {
     "id": "ST004",
@@ -89,7 +98,10 @@
     "orgName": "전라남도",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F953",
+    "iconFallback": "🥓",
+    "iconLabel": "돼지불고기"
   },
   {
     "id": "ST005",
@@ -113,7 +125,10 @@
     "orgName": "고흥군청",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F41F",
+    "iconFallback": "🐟",
+    "iconLabel": "삼치"
   },
   {
     "id": "ST006",
@@ -139,7 +154,10 @@
     "orgName": "고흥군청",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F41F",
+    "iconFallback": "🐟",
+    "iconLabel": "장어"
   },
   {
     "id": "ST007",
@@ -164,7 +182,10 @@
     "orgName": "곡성군/전라남도",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F980",
+    "iconFallback": "🦀",
+    "iconLabel": "참게·은어"
   },
   {
     "id": "ST008",
@@ -187,7 +208,10 @@
     "orgName": "전라남도 광양시청",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F969",
+    "iconFallback": "🥩",
+    "iconLabel": "광양불고기"
   },
   {
     "id": "ST009",
@@ -210,7 +234,10 @@
     "orgName": "전라남도",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F96C",
+    "iconFallback": "🥬",
+    "iconLabel": "산채정식"
   },
   {
     "id": "ST010",
@@ -234,7 +261,10 @@
     "orgName": "나주시 문화관광",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F41F",
+    "iconFallback": "🐟",
+    "iconLabel": "장어"
   },
   {
     "id": "ST011",
@@ -257,7 +287,10 @@
     "orgName": "나주시 문화관광",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F35C",
+    "iconFallback": "🍜",
+    "iconLabel": "나주곰탕"
   },
   {
     "id": "ST012",
@@ -281,7 +314,10 @@
     "orgName": "나주시/전라남도",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F41F",
+    "iconFallback": "🐟",
+    "iconLabel": "홍어"
   },
   {
     "id": "ST013",
@@ -305,7 +341,10 @@
     "orgName": "담양군 문화관광",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F35C",
+    "iconFallback": "🍜",
+    "iconLabel": "국수"
   },
   {
     "id": "ST014",
@@ -328,7 +367,10 @@
     "orgName": "담양군 문화관광",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F96C",
+    "iconFallback": "🥬",
+    "iconLabel": "죽순"
   },
   {
     "id": "ST015",
@@ -351,7 +393,10 @@
     "orgName": "전라남도/담양군",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F35C",
+    "iconFallback": "🍜",
+    "iconLabel": "국밥"
   },
   {
     "id": "ST016",
@@ -375,7 +420,10 @@
     "orgName": "목포시 문화관광",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F41F",
+    "iconFallback": "🐟",
+    "iconLabel": "민어"
   },
   {
     "id": "ST017",
@@ -402,7 +450,10 @@
     "orgName": "무안군보건소",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F419",
+    "iconFallback": "🐙",
+    "iconLabel": "낙지"
   },
   {
     "id": "ST018",
@@ -426,7 +477,10 @@
     "orgName": "전라남도",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F41A",
+    "iconFallback": "🐚",
+    "iconLabel": "꼬막"
   },
   {
     "id": "ST019",
@@ -449,7 +503,10 @@
     "orgName": "순천시",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F969",
+    "iconFallback": "🥩",
+    "iconLabel": "곱창"
   },
   {
     "id": "ST020",
@@ -473,7 +530,10 @@
     "orgName": "순천시/전라남도",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F35C",
+    "iconFallback": "🍜",
+    "iconLabel": "국밥"
   },
   {
     "id": "ST021",
@@ -495,7 +555,10 @@
     "orgName": "순천시",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F357",
+    "iconFallback": "🍗",
+    "iconLabel": "닭구이"
   },
   {
     "id": "ST022",
@@ -519,7 +582,10 @@
     "orgName": "전라남도",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F419",
+    "iconFallback": "🐙",
+    "iconLabel": "낙지"
   },
   {
     "id": "ST023",
@@ -542,7 +608,10 @@
     "orgName": "전라남도 여수시청",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F35C",
+    "iconFallback": "🍜",
+    "iconLabel": "장어탕"
   },
   {
     "id": "ST024",
@@ -567,7 +636,10 @@
     "orgName": "전라남도 여수시청",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F969",
+    "iconFallback": "🥩",
+    "iconLabel": "곱창"
   },
   {
     "id": "ST025",
@@ -592,7 +664,10 @@
     "orgName": "전라남도 여수시청",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F980",
+    "iconFallback": "🦀",
+    "iconLabel": "게장"
   },
   {
     "id": "ST026",
@@ -615,7 +690,10 @@
     "orgName": "전라남도 여수시청",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F41F",
+    "iconFallback": "🐟",
+    "iconLabel": "서대회·장어탕"
   },
   {
     "id": "ST027",
@@ -637,7 +715,10 @@
     "orgName": "전라남도 여수시청",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F990",
+    "iconFallback": "🦐",
+    "iconLabel": "해물삼합"
   },
   {
     "id": "ST028",
@@ -661,7 +742,10 @@
     "orgName": "전라남도 영광군청",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F41F",
+    "iconFallback": "🐟",
+    "iconLabel": "굴비"
   },
   {
     "id": "ST029",
@@ -685,7 +769,10 @@
     "orgName": "전라남도",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F419",
+    "iconFallback": "🐙",
+    "iconLabel": "낙지"
   },
   {
     "id": "ST030",
@@ -709,7 +796,10 @@
     "orgName": "완도군 문화관광",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F41A",
+    "iconFallback": "🐚",
+    "iconLabel": "전복"
   },
   {
     "id": "ST031",
@@ -734,7 +824,10 @@
     "orgName": "전라남도 장성군청",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F41F",
+    "iconFallback": "🐟",
+    "iconLabel": "민물고기"
   },
   {
     "id": "ST032",
@@ -758,7 +851,10 @@
     "orgName": "전라남도",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F9AA",
+    "iconFallback": "🦪",
+    "iconLabel": "키조개·바지락"
   },
   {
     "id": "ST033",
@@ -782,7 +878,10 @@
     "orgName": "장흥군청",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F969",
+    "iconFallback": "🥩",
+    "iconLabel": "한우"
   },
   {
     "id": "ST034",
@@ -808,7 +907,10 @@
     "orgName": "진도군/전라남도",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F41F",
+    "iconFallback": "🐟",
+    "iconLabel": "간재미"
   },
   {
     "id": "ST035",
@@ -831,7 +933,10 @@
     "orgName": "전라남도 함평군청",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F35A",
+    "iconFallback": "🍚",
+    "iconLabel": "한우비빔밥"
   },
   {
     "id": "ST036",
@@ -856,6 +961,9 @@
     "orgName": "해남군/전라남도",
     "orgTel": "",
     "dataDate": "2026-06-18",
-    "nearby": []
+    "nearby": [],
+    "iconCode": "1F357",
+    "iconFallback": "🍗",
+    "iconLabel": "닭코스요리"
   }
 ]

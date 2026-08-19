@@ -44,6 +44,9 @@ export function MapChatExplorer({ streets }: { streets: Street[] }) {
       label: s.name,
       kind: "street" as const,
       highlight: s.id === selectedId,
+      iconCode: s.iconCode,
+      iconFallback: s.iconFallback,
+      iconLabel: s.iconLabel,
     })), [streets, selectedId]);
 
   const nearbyTourism = useMemo(() => {
@@ -133,7 +136,7 @@ export function MapChatExplorer({ streets }: { streets: Street[] }) {
           <div className="border-t border-line p-4">
             {messages.length === 1 && <div className="mb-3 flex flex-wrap gap-1.5">{["전복을 먹고 싶어", "낙지 요리 추천해줘", "떡갈비 먹으러 가고 싶어"].map((example) => <button key={example} type="button" onClick={() => submit(example)} className="rounded-full border border-line-strong bg-surface px-3 py-1.5 text-[12px] text-fg hover:border-brand hover:text-brand">{example}</button>)}</div>}
             <div className="flex items-end gap-2"><label htmlFor="chat-input" className="sr-only">먹고 싶은 음식 입력</label><textarea id="chat-input" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }} rows={2} placeholder="예: 전복을 먹고 싶어" className="min-h-[52px] flex-1 resize-none rounded-2xl border border-line bg-canvas px-4 py-3 text-[14px] text-fg outline-none placeholder:text-fg-muted focus:border-brand"/><button type="button" disabled={!input.trim() || pending} onClick={() => submit()} className="h-[52px] shrink-0 rounded-2xl bg-brand px-5 text-[14px] font-bold text-fg-inverse disabled:opacity-40">보내기</button></div>
-            <p className="mt-2 text-[10px] leading-relaxed text-fg-muted">지도 핀은 좌표가 검증된 음식거리만 표시합니다. 관광지는 같은 시·군의 등록 데이터를 우선 추천합니다.</p>
+            <p className="mt-2 text-[10px] leading-relaxed text-fg-muted">지도 음식 아이콘은 각 특화거리의 대표 메뉴를 뜻하며, 위치는 거리의 대표 부근을 표시합니다. 관광지는 같은 시·군의 등록 데이터를 우선 추천합니다. · Food icons: OpenMoji (CC BY-SA 4.0)</p>
           </div>
         </section>
       </div>
