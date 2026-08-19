@@ -5,7 +5,12 @@ import { useMemo, useState } from "react";
 
 import { CategoryTastePanel } from "@/components/CategoryTastePanel";
 import { RegionMap, type MapMarker } from "@/components/RegionMap";
-import { randomSeed, rankCandidates, type Preference } from "@/lib/recommend";
+import {
+  randomSeed,
+  recommendByExactCategory,
+  type CategoryRecommendationResult,
+  type Preference,
+} from "@/lib/recommend";
 import type { Food, Street } from "@/lib/types";
 
 type Message = { role: "user" | "assistant"; content: string };
@@ -38,6 +43,7 @@ export function MapChatExplorer({
   const [lastTaste, setLastTaste] = useState("");
   const [inputMode, setInputMode] = useState<"ai" | "category">("ai");
   const [lastCategoryPreference, setLastCategoryPreference] = useState<Preference | null>(null);
+  const [categoryResult, setCategoryResult] = useState<CategoryRecommendationResult | null>(null);
 
   const selectedStreet = useMemo(
     () => streets.find((street) => street.id === selectedId),
@@ -60,6 +66,15 @@ export function MapChatExplorer({
         .filter(Boolean) as Food[],
     [recommendedFoodIds, foods],
   );
+
+  const categoryScoreByFoodId = useMemo(() => {
+    const map = new Map<string, CategoryRecommendationResult["alternatives"][number]>();
+    if (!categoryResult) return map;
+    for (const item of [...categoryResult.exact, ...categoryResult.alternatives]) {
+      map.set(item.food.id, item);
+    }
+    return map;
+  }, [categoryResult]);
 
   // 첫 화면에는 광주를 제외하고 전라남도 음식특화거리만 표시한다.
   // LLM이 음식을 추천하면 해당 음식을 실제로 취급하는 광주·전남 식당 좌표를
@@ -142,9 +157,10 @@ export function MapChatExplorer({
 
   const recommendByCategory = (pref: Preference) => {
     setLastCategoryPreference(pref);
-    const ids = rankCandidates(foods, pref, randomSeed())
-      .slice(0, 5)
-      .map((item) => item.food.id);
+    const result = recommendByExactCategory(foods, pref, 5, randomSeed());
+    setCategoryResult(result);
+    const shown = result.exact.length > 0 ? result.exact : result.alternatives;
+    const ids = shown.map((item) => item.food.id);
     setRecommendedFoodIds(ids);
     selectFirstMappedFood(ids);
   };
@@ -157,6 +173,7 @@ export function MapChatExplorer({
     setMessages([...previous, { role: "user", content: text }]);
     setInput("");
     setLastTaste(text);
+    setCategoryResult(null);
     setPending(true);
 
     try {
@@ -203,6 +220,7 @@ export function MapChatExplorer({
   const switchInputMode = () => {
     setInputMode((mode) => (mode === "ai" ? "category" : "ai"));
     setRecommendedFoodIds([]);
+    setCategoryResult(null);
     setSelectedId(undefined);
   };
 
@@ -390,10 +408,46 @@ export function MapChatExplorer({
               />
             )}
 
+            {inputMode === "category" && categoryResult && (
+              <div
+                className={`mt-5 rounded-2xl border px-4 py-3 ${
+                  categoryResult.exact.length > 0
+                    ? "border-accent/40 bg-accent-soft"
+                    : "border-brand/50 bg-brand-soft"
+                }`}
+                role="status"
+              >
+                {categoryResult.exact.length > 0 ? (
+                  <>
+                    <p className="text-[13px] font-bold text-accent">선택 조건 정확 일치</p>
+                    <p className="mt-1 text-[12px] leading-relaxed text-fg-muted">
+                      선택한 월·맵기·국물·날것·주재료를 모두 정확히 만족하는 음식이
+                      {` ${categoryResult.exactTotal}개`} 있습니다. 아래에는 정확 일치 음식만 보여줘요.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-[13px] font-bold text-brand">해당 조건의 음식이 없습니다 · 대체 추천</p>
+                    <p className="mt-1 text-[12px] leading-relaxed text-fg-muted">
+                      선택한 월까지 포함해 모든 조건을 정확히 만족하는 음식이 없어,
+                      맞는 조건 수가 많은 음식부터 대체 추천합니다.
+                      {categoryResult.exactTasteAnySeason > 0 && (
+                        <> 취향 조건만 보면 정확 일치 음식은 {categoryResult.exactTasteAnySeason}개 있지만 선택한 달 제철이 아닙니다.</>
+                      )}
+                    </p>
+                  </>
+                )}
+              </div>
+            )}
+
             {recommendedFoods.length > 0 && (
               <section className="mt-5 border-t border-line pt-4">
                 <div className="mb-2 flex items-center justify-between gap-3">
-                  <p className="text-[12px] font-bold text-fg-muted">추천 음식</p>
+                  <p className="text-[12px] font-bold text-fg-muted">
+                    {inputMode === "category" && categoryResult?.exact.length === 0
+                      ? "대체 추천 음식"
+                      : "추천 음식"}
+                  </p>
                   <button
                     type="button"
                     onClick={refreshRecommendations}
@@ -420,6 +474,13 @@ export function MapChatExplorer({
                           {food.months.length ? `${food.months.join("·")}월 제철` : "계절 정보 없음"}
                         </span>
                       </div>
+                      {inputMode === "category" &&
+                        categoryResult?.exact.length === 0 &&
+                        (categoryScoreByFoodId.get(food.id)?.mismatches.length ?? 0) > 0 && (
+                          <p className="mt-2 rounded-xl bg-brand-soft px-3 py-2 text-[11px] leading-relaxed text-brand">
+                            대체 추천 차이 · {categoryScoreByFoodId.get(food.id)?.mismatches.join(" · ")}
+                          </p>
+                        )}
                       {firstFoodMarkerByFoodId.get(food.id) ? (
                         <button
                           type="button"

@@ -586,6 +586,123 @@ function diversify(scored: ScoredFood[], limit: number): ScoredFood[] {
   return picked;
 }
 
+
+export interface CategoryRecommendationResult {
+  /** 선택한 월과 모든 취향 조건을 정확히 만족하는 결과. */
+  exact: ScoredFood[];
+  /** exact가 하나도 없을 때만 보여 주는 대체 추천. */
+  alternatives: ScoredFood[];
+  /** 선택한 월까지 포함한 완전 일치 후보 수. */
+  exactTotal: number;
+  /** 월을 빼면 취향 조건을 정확히 만족하는 음식 수. */
+  exactTasteAnySeason: number;
+}
+
+/**
+ * 카테고리 입력에서는 사용자가 직접 고른 값을 '점수'가 아니라 조건으로 본다.
+ * 맵기 3이면 spicy === 3만, 해산물이면 해산물이 포함된 음식만 정확 일치다.
+ * 국물의 '상관없음'과 주재료의 '상관없음'만 필터에서 제외한다.
+ */
+export function satisfiesCategoryTasteExactly(pref: Preference, food: Food): boolean {
+  if (food.spicy !== pref.spicy) return false;
+  if (pref.soup !== 1 && food.hasSoup !== (pref.soup === 2)) return false;
+  if (food.isRaw !== (pref.raw === "O")) return false;
+  if (
+    pref.ingredient !== "상관없음" &&
+    !food.mainIngredients.includes(pref.ingredient)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function categoryConditionHits(pref: Preference, food: Food): number {
+  let hits = 0;
+  if (food.spicy === pref.spicy) hits += 1;
+  if (pref.soup === 1 || food.hasSoup === (pref.soup === 2)) hits += 1;
+  if (food.isRaw === (pref.raw === "O")) hits += 1;
+  if (
+    pref.ingredient === "상관없음" ||
+    food.mainIngredients.includes(pref.ingredient)
+  ) {
+    hits += 1;
+  }
+  return hits;
+}
+
+function monthGap(months: number[], target: number): number {
+  if (months.length === 0) return 12;
+  return Math.min(
+    ...months.map((month) => {
+      const direct = Math.abs(month - target);
+      return Math.min(direct, 12 - direct);
+    }),
+  );
+}
+
+/**
+ * 카테고리 선택 전용 추천.
+ *
+ * 1) 선택 월 + 맵기/국물/날것/주재료를 모두 정확히 만족하는 음식이 있으면
+ *    그 음식만 반환한다. 결과가 2개뿐이면 2개만 보여 주며 대체 음식으로
+ *    5개를 억지로 채우지 않는다.
+ * 2) 완전 일치가 0개면 전체 음식 중 '정확히 맞춘 조건 수'가 많은 순으로
+ *    대체 추천한다. 같은 수라면 선택 월 제철, 기존 취향 점수, 제철 월과의
+ *    거리 순으로 정렬한다.
+ */
+export function recommendByExactCategory(
+  foods: Food[],
+  pref: Preference,
+  limit = 5,
+  seed: string = randomSeed(),
+): CategoryRecommendationResult {
+  const exactTaste = foods.filter((food) => satisfiesCategoryTasteExactly(pref, food));
+  const exactSeason = exactTaste.filter((food) => food.months.includes(pref.month));
+
+  if (exactSeason.length > 0) {
+    const exact = rankCandidates(exactSeason, pref, seed).slice(0, limit);
+    return {
+      exact,
+      alternatives: [],
+      exactTotal: exactSeason.length,
+      exactTasteAnySeason: exactTaste.length,
+    };
+  }
+
+  const alternatives = foods
+    .map<ScoredFood>((food) => ({
+      food,
+      match: explainMatch(pref, food).score,
+      inSeason: food.months.includes(pref.month),
+      mismatches: describeMismatches(pref, food),
+      demoted: false,
+    }))
+    .sort((a, b) => {
+      const hitDiff =
+        categoryConditionHits(pref, b.food) - categoryConditionHits(pref, a.food);
+      if (hitDiff !== 0) return hitDiff;
+      if (a.inSeason !== b.inSeason) return a.inSeason ? -1 : 1;
+      if (b.match !== a.match) return b.match - a.match;
+      const gapDiff = monthGap(a.food.months, pref.month) - monthGap(b.food.months, pref.month);
+      if (gapDiff !== 0) return gapDiff;
+      return tieHash(a.food.id, seed) - tieHash(b.food.id, seed);
+    });
+
+  const seenAlternativeNames = new Set<string>();
+  const uniqueAlternatives = alternatives.filter((item) => {
+    if (seenAlternativeNames.has(item.food.name)) return false;
+    seenAlternativeNames.add(item.food.name);
+    return true;
+  });
+
+  return {
+    exact: [],
+    alternatives: uniqueAlternatives.slice(0, limit),
+    exactTotal: 0,
+    exactTasteAnySeason: exactTaste.length,
+  };
+}
+
 // --------------------------------------------------------------------------
 // 음식 → 특화거리 매칭
 // --------------------------------------------------------------------------

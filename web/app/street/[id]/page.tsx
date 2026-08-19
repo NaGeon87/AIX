@@ -36,9 +36,14 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number) {
 type Shop = {
   restaurant: Restaurant;
   menus: string[];
+  /** 대표 먹거리 데이터에 직접 연결됐는지, 지역 식당 보충인지 구분한다. */
+  relation: "related" | "local";
   /** 내부 정렬용. 화면에는 노출하지 않는다. */
   distanceKm: number | null;
 };
+
+const MIN_VISIBLE_SHOPS = 6;
+const MAX_VISIBLE_SHOPS = 12;
 
 function centroid(restaurants: Restaurant[]) {
   const points = restaurants.filter(
@@ -58,48 +63,67 @@ export default async function StreetPage({ params }: { params: Promise<{ id: str
   if (!street) notFound();
 
   const keywordFoods = foods.filter((food) => foodMatchesStreet(food, street.foodKeywords));
-  const sourceFoods = keywordFoods.length > 0 ? keywordFoods : foods;
-  const shopMap = new Map<string, { restaurant: Restaurant; menus: Set<string> }>();
 
-  for (const food of sourceFoods) {
-    for (const restaurant of food.restaurants) {
-      if (restaurant.area !== street.sigungu) continue;
-      const key = restaurant.id || `${restaurant.name}-${restaurant.address}`;
-      const existing = shopMap.get(key);
-      if (existing) {
-        existing.menus.add(food.displayName || food.name);
-      } else {
-        shopMap.set(key, {
-          restaurant,
-          menus: new Set([food.displayName || food.name]),
-        });
+  const collectShops = (sourceFoods: Food[], relation: Shop["relation"]) => {
+    const shopMap = new Map<string, { restaurant: Restaurant; menus: Set<string> }>();
+    for (const food of sourceFoods) {
+      for (const restaurant of food.restaurants) {
+        if (restaurant.area !== street.sigungu) continue;
+        const key = restaurant.id || `${restaurant.name}-${restaurant.address}`;
+        const existing = shopMap.get(key);
+        if (existing) {
+          existing.menus.add(food.displayName || food.name);
+        } else {
+          shopMap.set(key, {
+            restaurant,
+            menus: new Set([food.displayName || food.name]),
+          });
+        }
       }
     }
-  }
 
-  const allShops: Shop[] = [...shopMap.values()].map(({ restaurant, menus }) => ({
-    restaurant,
-    menus: [...menus].slice(0, 3),
-    distanceKm:
-      street.lat !== null &&
-      street.lon !== null &&
-      restaurant.lat !== null &&
-      restaurant.lon !== null
-        ? haversineKm(street.lat, street.lon, restaurant.lat, restaurant.lon)
-        : null,
-  }));
+    return [...shopMap.values()].map<Shop>(({ restaurant, menus }) => ({
+      restaurant,
+      menus: [...menus].slice(0, 3),
+      relation,
+      distanceKm:
+        street.lat !== null &&
+        street.lon !== null &&
+        restaurant.lat !== null &&
+        restaurant.lon !== null
+          ? haversineKm(street.lat, street.lon, restaurant.lat, restaurant.lon)
+          : null,
+    }));
+  };
 
-  // 거리 상세에서는 해당 시·군의 대표 음식 관련 식당을 넓게 보여준다.
-  // 거리 대표 아이콘만 실제로 지도에 표시하는 식당들의 좌표 중심으로 이동시켜,
-  // 특정 행정동에 과도하게 좁히지 않으면서도 핀이 식당 분포를 대표하도록 한다.
-  const shops: Shop[] = [...allShops]
-    .sort((a, b) => {
+  const sortShops = (items: Shop[]) =>
+    [...items].sort((a, b) => {
       if (a.distanceKm !== null && b.distanceKm !== null) return a.distanceKm - b.distanceKm;
       if (a.distanceKm !== null) return -1;
       if (b.distanceKm !== null) return 1;
       return Number(b.restaurant.isLocalSpecialty) - Number(a.restaurant.isLocalSpecialty);
-    })
-    .slice(0, 12);
+    });
+
+  // 1순위: 거리의 대표 먹거리와 직접 연결되고 같은 시·군에 있는 식당.
+  const relatedShops = sortShops(collectShops(keywordFoods, "related"));
+
+  // 데이터가 희소한 거리에서는 화면이 0~1개로 끝나지 않도록 같은 시·군의
+  // 등록 식당을 별도 '지역 추가' 표기로 보충한다. 대표 먹거리 식당인 것처럼
+  // 섞어 쓰지 않고 UI에서 출처를 구분해 데이터 부족을 숨기지 않는다.
+  const relatedIds = new Set(relatedShops.map((shop) => shop.restaurant.id));
+  const localFallback = sortShops(collectShops(foods, "local")).filter(
+    (shop) => !relatedIds.has(shop.restaurant.id),
+  );
+
+  const shops: Shop[] = relatedShops.slice(0, MAX_VISIBLE_SHOPS);
+  if (shops.length < MIN_VISIBLE_SHOPS) {
+    shops.push(
+      ...localFallback.slice(0, Math.min(
+        MAX_VISIBLE_SHOPS - shops.length,
+        MIN_VISIBLE_SHOPS - shops.length,
+      )),
+    );
+  }
 
   // 지도에는 최대 8개 식당을 표시한다. 거리 아이콘은 바로 이 식당들의
   // 중앙점에 놓는다. 좌표가 하나도 없을 때만 원래 거리 좌표를 사용한다.
@@ -131,7 +155,10 @@ export default async function StreetPage({ params }: { params: Promise<{ id: str
       id: `shop-${shop.restaurant.id}`,
       lat: shop.restaurant.lat,
       lon: shop.restaurant.lon,
-      label: shop.restaurant.name,
+      label:
+        shop.relation === "related"
+          ? shop.restaurant.name
+          : `지역 추가 · ${shop.restaurant.name}`,
       kind: "restaurant",
     });
   }
@@ -189,10 +216,21 @@ export default async function StreetPage({ params }: { params: Promise<{ id: str
             <h2 className="mt-0.5 font-display text-[22px] text-fg">근처 식당 추천</h2>
           </div>
           <p className="text-right text-[11px] text-fg-muted">
-            해당 시·군의
-            <br />관련 식당 표시
+            대표음식 연결 {relatedShops.length}곳
+            <br />현재 표시 {shops.length}곳
           </p>
         </div>
+
+        {relatedShops.length < MIN_VISIBLE_SHOPS && shops.length > relatedShops.length && (
+          <div className="mt-3 rounded-2xl border border-soup/40 bg-surface-alt px-4 py-3 text-[12px] leading-relaxed text-fg-muted">
+            <b className="font-bold text-fg">대표 먹거리와 직접 연결된 식당 데이터가 {relatedShops.length}곳뿐입니다.</b>{" "}
+            식당이 너무 적거나 비어 보이지 않도록 같은 {street.sigungu}의 등록 식당을
+            <b className="font-bold text-soup"> 지역 추가</b>로 구분해 함께 표시합니다.
+            {street.shopCount > 0 && (
+              <> 공식 거리 데이터의 점포 수는 {street.shopCount}곳으로 기록되어 있어 현재 음식 DB가 전체 업소를 모두 포함하지는 않습니다.</>
+            )}
+          </div>
+        )}
 
         {shops.length === 0 ? (
           <p className="mt-3 rounded-2xl border border-line bg-surface px-4 py-7 text-center text-[13px] leading-relaxed text-fg-muted">
@@ -206,6 +244,11 @@ export default async function StreetPage({ params }: { params: Promise<{ id: str
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <h3 className="truncate text-[15px] font-bold text-fg">{shop.restaurant.name}</h3>
+                      {shop.relation === "local" && (
+                        <span className="shrink-0 rounded-full bg-surface-alt px-2 py-0.5 text-[10px] font-bold text-soup">
+                          지역 추가
+                        </span>
+                      )}
                       {shop.restaurant.isLocalSpecialty && (
                         <span className="shrink-0 rounded-full bg-brand-soft px-2 py-0.5 text-[10px] font-bold text-brand">
                           지역특화
@@ -214,6 +257,7 @@ export default async function StreetPage({ params }: { params: Promise<{ id: str
                     </div>
                     <p className="mt-1 text-[11px] text-fg-muted">{shop.restaurant.address}</p>
                     <p className="mt-2 text-[12px] text-fg">
+                      {shop.relation === "related" ? "대표 먹거리 연결 · " : "지역 등록 메뉴 · "}
                       {shop.menus.join(" · ")}
                     </p>
                   </div>
@@ -233,7 +277,7 @@ export default async function StreetPage({ params }: { params: Promise<{ id: str
       </section>
 
       <footer className="px-5 pt-7 text-[11px] leading-relaxed text-fg-muted">
-        <p>식당 추천은 대표 음식과 연결된 식당 중 거리 주소의 읍·면·동 생활권을 우선 사용하고, 생활권 정보를 찾기 어려운 경우 대표 위치 주변 식당을 사용합니다.</p>
+        <p>대표 먹거리와 직접 연결된 식당을 먼저 표시합니다. 현재 음식 DB의 직접 연결 식당이 적은 거리만 같은 시·군의 등록 식당을 ‘지역 추가’로 보충하며, 거리 아이콘은 실제 지도에 표시된 식당들의 좌표 중심에 놓습니다.</p>
       </footer>
     </main>
   );
