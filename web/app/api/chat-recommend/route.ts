@@ -11,7 +11,13 @@ import {
 import type { Food, Restaurant } from "@/lib/types";
 
 type ChatTurn = { role: "user" | "assistant"; content: string };
-type LocationIntent = { region?: string; area?: string; label?: string };
+type LocationIntent = {
+  region?: string;
+  area?: string;
+  label?: string;
+  excludeRegions?: string[];
+  excludeAreas?: string[];
+};
 type LlmResult = {
   reply: string;
   foodIds: string[];
@@ -21,6 +27,14 @@ type LlmResult = {
 
 function locationMatches(restaurant: Restaurant, intent: LocationIntent | null) {
   if (!intent) return true;
+  if (intent.excludeRegions?.includes(restaurant.region)) return false;
+  if (intent.excludeAreas?.length) {
+    const area = restaurant.area.replace(/\s+/g, "");
+    if (intent.excludeAreas.some((excluded) => {
+      const wanted = excluded.replace(/\s+/g, "");
+      return area.includes(wanted) || wanted.includes(area);
+    })) return false;
+  }
   if (intent.region && restaurant.region !== intent.region) return false;
   if (intent.area) {
     const area = restaurant.area.replace(/\s+/g, "");
@@ -30,28 +44,93 @@ function locationMatches(restaurant: Restaurant, intent: LocationIntent | null) 
   return true;
 }
 
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isExplicitlyExcluded(normalized: string, names: string[]) {
+  return names.some((name) => {
+    if (!name) return false;
+    const escaped = escapeRegExp(name);
+    return new RegExp(`${escaped}(?:은|는|이|가)?(?:말고|빼고|빼|제외하고|제외|아닌|싫어|싫고)`).test(normalized);
+  });
+}
+
 function detectLocationIntent(message: string): LocationIntent | null {
   const normalized = message.replace(/\s+/g, "");
   if (!normalized) return null;
 
-  const allAreas = Array.from(
-    new Set(foods.flatMap((food) => food.restaurants.map((r) => r.area).filter(Boolean))),
-  ).sort((a, b) => b.length - a.length);
+  const restaurants = foods.flatMap((food) => food.restaurants);
+  const allAreas = Array.from(new Set(restaurants.map((r) => r.area).filter(Boolean)))
+    .sort((a, b) => b.length - a.length);
+  const excludeAreas: string[] = [];
+  const excludeRegions: string[] = [];
+  let positiveArea: { region?: string; area: string; label: string } | null = null;
 
   for (const area of allAreas) {
     const compact = area.replace(/\s+/g, "");
     const short = compact.replace(/(특별자치도|광역시|특별시|시|군|구)$/u, "");
-    if ((compact.length >= 2 && normalized.includes(compact)) || (short.length >= 2 && normalized.includes(short))) {
-      const sample = foods.flatMap((food) => food.restaurants).find((r) => r.area === area);
-      return { region: sample?.region, area, label: `${sample?.region ?? ""} ${area}`.trim() };
+    const names = [compact, short].filter((name) => name.length >= 2);
+    if (!names.some((name) => normalized.includes(name))) continue;
+    const sample = restaurants.find((r) => r.area === area);
+    if (isExplicitlyExcluded(normalized, names)) {
+      excludeAreas.push(area);
+      continue;
+    }
+    if (!positiveArea) {
+      positiveArea = { region: sample?.region, area, label: `${sample?.region ?? ""} ${area}`.trim() };
     }
   }
 
-  if (normalized.includes("광주")) return { region: "광주", label: "광주" };
-  if (normalized.includes("전남") || normalized.includes("전라남도")) {
-    return { region: "전남", label: "전남" };
+  const gwangjuExcluded = isExplicitlyExcluded(normalized, ["광주", "광주광역시"]);
+  const jeonnamExcluded = isExplicitlyExcluded(normalized, ["전남", "전라남도"]);
+  if (gwangjuExcluded) excludeRegions.push("광주");
+  if (jeonnamExcluded) excludeRegions.push("전남");
+
+  let region: string | undefined;
+  let label: string | undefined;
+  if (positiveArea) {
+    region = positiveArea.region;
+    label = positiveArea.label;
+  } else if (!gwangjuExcluded && normalized.includes("광주")) {
+    region = "광주";
+    label = "광주";
+  } else if (!jeonnamExcluded && (normalized.includes("전남") || normalized.includes("전라남도"))) {
+    region = "전남";
+    label = "전남";
   }
-  return null;
+
+  if (!region && !positiveArea && excludeRegions.length === 0 && excludeAreas.length === 0) return null;
+  if (!label) {
+    const excludedLabels = [
+      ...excludeRegions.map((value) => value),
+      ...excludeAreas,
+    ];
+    label = `${excludedLabels.join("·")} 제외`;
+  } else if (excludeRegions.length || excludeAreas.length) {
+    const excludedLabels = [...excludeRegions, ...excludeAreas];
+    label = `${label} · ${excludedLabels.join("·")} 제외`;
+  }
+
+  return {
+    region,
+    area: positiveArea?.area,
+    label,
+    excludeRegions: Array.from(new Set(excludeRegions)),
+    excludeAreas: Array.from(new Set(excludeAreas)),
+  };
+}
+
+function detectExcludedFoodTerms(message: string): string[] {
+  const normalized = message.replace(/\s+/g, "");
+  const terms = Array.from(
+    new Set(foods.flatMap((food) => [food.ingredient, food.displayName, food.name]).filter((v): v is string => Boolean(v))),
+  ).sort((a, b) => b.length - a.length);
+  return terms.filter((term) => {
+    const compact = term.replace(/\s+/g, "");
+    if (compact.length < 2 || !normalized.includes(compact)) return false;
+    return isExplicitlyExcluded(normalized, [compact]);
+  });
 }
 
 function compactFood(food: Food, location: LocationIntent | null) {
@@ -101,9 +180,15 @@ function buildLocalCandidates(message: string, excludeFoodIds: string[] = [], lo
   const parsed = parseTasteText(message);
   const pref: Preference = { ...DEFAULT_PREFERENCE, month: getKstMonth(), ...parsed.pref };
   const excluded = new Set(excludeFoodIds);
-  const locationFoods = foods.filter(
-    (food) => !excluded.has(food.id) && food.restaurants.some((r) => locationMatches(r, location)),
-  );
+  const excludedFoodTerms = detectExcludedFoodTerms(message);
+  const locationFoods = foods.filter((food) => {
+    if (excluded.has(food.id)) return false;
+    if (!food.restaurants.some((r) => locationMatches(r, location))) return false;
+    if (parsed.excludedIngredients.some((category) => food.mainIngredients.includes(category))) return false;
+    const compactFields = [food.ingredient, food.displayName, food.name].map((value) => String(value || "").replace(/\s+/g, ""));
+    if (excludedFoodTerms.some((term) => compactFields.some((field) => field.includes(term.replace(/\s+/g, ""))))) return false;
+    return true;
+  });
   const exact = locationFoods.filter((food) => satisfiesExplicitTaste(food, parsed));
   const source = exact.length > 0 ? exact : locationFoods;
 
@@ -170,6 +255,8 @@ function fallbackRecommend(message: string, excludeFoodIds: string[] = [], locat
   const candidates = diversifiedIds.map((id) => byId.get(id)).filter((food): food is Food => Boolean(food));
   const understood = parsed.hits.map((hit) => `${hit.label}: ${hit.reading}`);
   if (location?.label) understood.push(`지역: ${location.label}`);
+  const excludedFoodTerms = detectExcludedFoodTerms(message);
+  if (excludedFoodTerms.length) understood.push(`음식 제외: ${excludedFoodTerms.join("·")}`);
   return {
     reply: candidates.length
       ? `${understood.length ? `${understood.join(", ")}로 이해했어요. ` : ""}${candidates.map((f) => f.displayName || f.name).join(", ")}을 추천해요.`
@@ -204,6 +291,8 @@ async function callSchoolLlm(url: string, apiKey: string, model: string, message
 - '안 매운' => spicy=0 선호
 - '해산물 먹고 싶다' => mainIngredients에 해산물 우선
 - '광주에서 먹고 싶다/광주 음식점 찾는다' => 아래 후보는 이미 광주 식당이 있는 음식으로 제한되어 있으므로 그 안에서 고른다.
+- '광주 말고/광주 빼고' => 광주 식당은 후보에서 이미 제외되어 있다. 절대로 광주를 다시 추천하지 않는다.
+- '해산물 말고/고기 빼고/전복 말고' 같은 부정 표현 => 해당 범주나 음식은 후보에서 이미 제외되어 있다. 반대 범주 하나를 임의로 단정하지 않는다.
 
 규칙:
 1) 추천 우선순위는 날것/익힘 여부 > 주재료 > 국물 여부 > 맵기 순이다.
