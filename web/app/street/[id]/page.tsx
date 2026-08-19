@@ -36,8 +36,26 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number) {
 type Shop = {
   restaurant: Restaurant;
   menus: string[];
+  /** 내부 정렬용. 화면에는 노출하지 않는다. */
   distanceKm: number | null;
 };
+
+function extractLocality(address: string) {
+  const match = address.match(/([가-힣0-9]+(?:읍|면|동))/);
+  return match?.[1] ?? null;
+}
+
+function centroid(restaurants: Restaurant[]) {
+  const points = restaurants.filter(
+    (restaurant) => restaurant.lat !== null && restaurant.lon !== null,
+  );
+  if (points.length === 0) return null;
+
+  return {
+    lat: points.reduce((sum, restaurant) => sum + (restaurant.lat as number), 0) / points.length,
+    lon: points.reduce((sum, restaurant) => sum + (restaurant.lon as number), 0) / points.length,
+  };
+}
 
 export default async function StreetPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -64,16 +82,52 @@ export default async function StreetPage({ params }: { params: Promise<{ id: str
     }
   }
 
-  const shops: Shop[] = [...shopMap.values()]
-    .map(({ restaurant, menus }) => ({
-      restaurant,
-      menus: [...menus].slice(0, 3),
+  const allShops: Shop[] = [...shopMap.values()].map(({ restaurant, menus }) => ({
+    restaurant,
+    menus: [...menus].slice(0, 3),
+    distanceKm:
+      street.lat !== null &&
+      street.lon !== null &&
+      restaurant.lat !== null &&
+      restaurant.lon !== null
+        ? haversineKm(street.lat, street.lon, restaurant.lat, restaurant.lon)
+        : null,
+  }));
+
+  // 시·군 전체를 '거리 식당'으로 잡으면 같은 군 안의 20~30km 떨어진 식당까지
+  // 섞일 수 있다. 주소에서 읍·면·동을 읽을 수 있으면 그 생활권을 최우선으로
+  // 묶고, 그렇지 않으면 기존 대표점 반경 8km 안의 식당을 거리 군집으로 본다.
+  const streetLocality = extractLocality(street.address);
+  const localityShops = streetLocality
+    ? allShops.filter((shop) => shop.restaurant.address.includes(streetLocality))
+    : [];
+  const radiusShops = allShops.filter(
+    (shop) => shop.distanceKm !== null && shop.distanceKm <= 8,
+  );
+
+  const clusteredShops =
+    localityShops.length > 0
+      ? localityShops
+      : radiusShops.length > 0
+        ? radiusShops
+        : [...allShops]
+            .sort((a, b) => (a.distanceKm ?? Number.POSITIVE_INFINITY) - (b.distanceKm ?? Number.POSITIVE_INFINITY))
+            .slice(0, 6);
+
+  const representative = centroid(clusteredShops.map((shop) => shop.restaurant)) ??
+    (street.lat !== null && street.lon !== null ? { lat: street.lat, lon: street.lon } : null);
+
+  const shops: Shop[] = clusteredShops
+    .map((shop) => ({
+      ...shop,
       distanceKm:
-        street.lat !== null &&
-        street.lon !== null &&
-        restaurant.lat !== null &&
-        restaurant.lon !== null
-          ? haversineKm(street.lat, street.lon, restaurant.lat, restaurant.lon)
+        representative && shop.restaurant.lat !== null && shop.restaurant.lon !== null
+          ? haversineKm(
+              representative.lat,
+              representative.lon,
+              shop.restaurant.lat,
+              shop.restaurant.lon,
+            )
           : null,
     }))
     .sort((a, b) => {
@@ -85,11 +139,11 @@ export default async function StreetPage({ params }: { params: Promise<{ id: str
     .slice(0, 12);
 
   const markers: MapMarker[] = [];
-  if (street.lat !== null && street.lon !== null) {
+  if (representative) {
     markers.push({
       id: street.id,
-      lat: street.lat,
-      lon: street.lon,
+      lat: representative.lat,
+      lon: representative.lon,
       label: street.name,
       kind: "street",
       highlight: true,
@@ -136,7 +190,7 @@ export default async function StreetPage({ params }: { params: Promise<{ id: str
         </p>
         <p className="mt-3 rounded-xl bg-surface-alt px-3 py-2.5 text-[12px] text-fg-muted">
           📍 {street.address}
-          <br />※ 지도 핀은 특정 점포의 출입구가 아니라 특화거리의 대표 부근을 표시합니다.
+          <br />※ 지도 핀은 연결된 거리 식당들의 위치를 바탕으로 계산한 대략적인 중심을 표시합니다.
         </p>
       </section>
 
@@ -163,8 +217,8 @@ export default async function StreetPage({ params }: { params: Promise<{ id: str
             <h2 className="mt-0.5 font-display text-[22px] text-fg">근처 식당 추천</h2>
           </div>
           <p className="text-right text-[11px] text-fg-muted">
-            거리 대표 위치 기준
-            <br />가까운 순 우선
+            같은 거리 생활권의
+            <br />등록 식당 우선
           </p>
         </div>
 
@@ -191,13 +245,6 @@ export default async function StreetPage({ params }: { params: Promise<{ id: str
                       {shop.menus.join(" · ")}
                     </p>
                   </div>
-                  {shop.distanceKm !== null && (
-                    <span className="shrink-0 rounded-full border border-line px-2.5 py-1 text-[11px] font-bold text-accent">
-                      {shop.distanceKm < 1
-                        ? `${Math.round(shop.distanceKm * 1000)}m`
-                        : `${shop.distanceKm.toFixed(1)}km`}
-                    </span>
-                  )}
                 </div>
                 <a
                   href={`https://map.kakao.com/link/search/${encodeURIComponent(shop.restaurant.address || shop.restaurant.name)}`}
@@ -214,7 +261,7 @@ export default async function StreetPage({ params }: { params: Promise<{ id: str
       </section>
 
       <footer className="px-5 pt-7 text-[11px] leading-relaxed text-fg-muted">
-        <p>식당 추천은 현재 프로젝트 음식 데이터에 등록된 식당 중 해당 시·군과 대표 음식이 연결되는 곳을 우선 사용합니다.</p>
+        <p>식당 추천은 대표 음식과 연결된 식당 중 거리 주소의 읍·면·동 생활권을 우선 사용하고, 생활권 정보를 찾기 어려운 경우 대표 위치 주변 식당을 사용합니다.</p>
       </footer>
     </main>
   );

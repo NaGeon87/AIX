@@ -44,6 +44,15 @@ export function MapChatExplorer({
     [selectedId, streets],
   );
 
+  const selectedFoodLocation = useMemo(() => {
+    if (!selectedId?.startsWith("food:")) return undefined;
+    const [, foodId, restaurantId] = selectedId.split(":");
+    const food = foods.find((item) => item.id === foodId);
+    const restaurant = food?.restaurants.find((item) => item.id === restaurantId);
+    if (!food || !restaurant) return undefined;
+    return { food, restaurant };
+  }, [selectedId, foods]);
+
   const recommendedFoods = useMemo(
     () =>
       recommendedFoodIds
@@ -280,6 +289,42 @@ export function MapChatExplorer({
               </Link>
             </div>
           )}
+
+          {selectedFoodLocation && (
+            <div className="absolute bottom-4 left-4 right-4 z-[850] rounded-2xl border border-line bg-surface/95 p-4 shadow-lg backdrop-blur lg:right-auto lg:w-[430px]">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-bold text-brand">
+                    {selectedFoodLocation.restaurant.region} {selectedFoodLocation.restaurant.area}
+                  </p>
+                  <h2 className="mt-0.5 font-display text-[20px] text-fg">
+                    {selectedFoodLocation.restaurant.name}
+                  </h2>
+                  <p className="mt-1 text-[12px] font-medium text-fg-muted">
+                    {selectedFoodLocation.food.displayName || selectedFoodLocation.food.name}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedId(undefined)}
+                  className="shrink-0 rounded-full border border-line px-2.5 py-1 text-[12px] text-fg-muted"
+                >
+                  닫기
+                </button>
+              </div>
+
+              <p className="mt-3 text-[11px] leading-relaxed text-fg-muted">
+                {selectedFoodLocation.restaurant.address}
+              </p>
+
+              <Link
+                href={`/nearby?restaurant=${encodeURIComponent(selectedFoodLocation.restaurant.name)}&food=${encodeURIComponent(selectedFoodLocation.food.displayName || selectedFoodLocation.food.name)}&region=${encodeURIComponent(selectedFoodLocation.restaurant.region)}&area=${encodeURIComponent(selectedFoodLocation.restaurant.area)}&lat=${selectedFoodLocation.restaurant.lat ?? ""}&lon=${selectedFoodLocation.restaurant.lon ?? ""}`}
+                className="mt-3 flex w-full items-center justify-center rounded-xl bg-brand px-4 py-3 text-[14px] font-bold text-fg-inverse transition hover:opacity-90"
+              >
+                근처 관광지 · 축제 추천 →
+              </Link>
+            </div>
+          )}
         </section>
 
         <section className="flex min-h-[48vh] flex-col bg-surface lg:min-h-0">
@@ -305,7 +350,7 @@ export function MapChatExplorer({
             </div>
             {foodMarkerCount > 0 && (
               <p className="mt-1 text-[11px] font-medium text-brand">
-                추천 음식을 먹을 수 있는 전남 위치 {foodMarkerCount}곳을 지도에 표시했어요
+                추천 음식을 먹을 수 있는 광주·전남 위치 {foodMarkerCount}곳을 지도에 표시했어요
               </p>
             )}
           </header>
@@ -460,7 +505,7 @@ export function MapChatExplorer({
               </button>
             </div>
             <p className="mt-2 text-[10px] leading-relaxed text-fg-muted">
-              지도는 전라남도 권역 안에서만 탐색됩니다. 처음에는 음식특화거리를 보여주고, 추천 후에는 거리 핀을 숨긴 뒤 해당 메뉴를 취급하는 전남 식당을 점으로 표시합니다.
+              지도는 전라남도 권역 안에서만 탐색됩니다. 처음에는 음식특화거리를 보여주고, 추천 후에는 거리 핀을 숨긴 뒤 해당 메뉴를 취급하는 광주·전남 식당을 점으로 표시합니다.
             </p>
           </div>
           )}
