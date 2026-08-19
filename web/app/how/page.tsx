@@ -7,6 +7,7 @@ import {
   CREDIBILITY_FLOOR,
   CATEGORY_DUPLICATE_PENALTY,
   MAX_PER_INGREDIENT,
+  MAX_PER_METHOD,
   RAW_PARTIAL,
   explainMatch,
   rankCandidates,
