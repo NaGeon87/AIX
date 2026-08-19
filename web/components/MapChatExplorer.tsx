@@ -53,7 +53,7 @@ export function MapChatExplorer({
   );
 
   // 첫 화면에는 광주를 제외하고 전라남도 음식특화거리만 표시한다.
-  // LLM이 음식을 추천하면 해당 음식을 실제로 취급하는 전남 식당 좌표를
+  // LLM이 음식을 추천하면 해당 음식을 실제로 취급하는 광주·전남 식당 좌표를
   // 음식 핀으로 최대 2곳씩 추가한다.
   const { markers, firstFoodMarkerByFoodId, foodMarkerCount } = useMemo(() => {
     const streetMarkers: MapMarker[] = streets
@@ -75,15 +75,11 @@ export function MapChatExplorer({
 
     const foodMarkers: MapMarker[] = [];
     const firstByFood = new Map<string, string>();
-    const usedRestaurants = new Set<string>();
-
     for (const food of recommendedFoods) {
       const restaurants = food.restaurants
         .filter(
           (restaurant) =>
-            restaurant.region === "전남" &&
-            restaurant.lat !== null &&
-            restaurant.lon !== null,
+            restaurant.lat !== null && restaurant.lon !== null,
         )
         .sort(
           (a, b) =>
@@ -92,8 +88,6 @@ export function MapChatExplorer({
 
       let added = 0;
       for (const restaurant of restaurants) {
-        if (usedRestaurants.has(restaurant.id)) continue;
-        usedRestaurants.add(restaurant.id);
         const id = `food:${food.id}:${restaurant.id}`;
         if (!firstByFood.has(food.id)) firstByFood.set(food.id, id);
         foodMarkers.push({
@@ -123,7 +117,7 @@ export function MapChatExplorer({
       const restaurant = food?.restaurants
         .filter(
           (item) =>
-            item.region === "전남" && item.lat !== null && item.lon !== null,
+            item.lat !== null && item.lon !== null,
         )
         .sort(
           (a, b) =>
@@ -166,7 +160,7 @@ export function MapChatExplorer({
       const ids = data.foodIds ?? [];
       setRecommendedFoodIds(ids);
 
-      // 지도에 표시할 수 있는 첫 추천 음식의 전남 식당으로 이동한다.
+      // 지도에 표시할 수 있는 첫 추천 음식의 광주·전남 식당으로 이동한다.
       selectFirstMappedFood(ids);
 
       setMessages((current) => [
@@ -204,11 +198,10 @@ export function MapChatExplorer({
   };
 
   const mapUnavailableReason = (food: Food) => {
-    const jeonnamRestaurants = food.restaurants.filter((restaurant) => restaurant.region === "전남");
-    if (jeonnamRestaurants.length === 0) {
-      return "전남 식당 위치 없음 · 현재 데이터에는 광주 등 다른 지역 식당만 등록돼 있어요";
+    if (food.restaurants.length === 0) {
+      return "지도 위치 정보 없음 · 등록된 식당 데이터가 없어요";
     }
-    return "지도 위치 정보 없음 · 등록된 전남 식당의 좌표가 없어요";
+    return "지도 위치 정보 없음 · 등록된 식당의 좌표가 없어요";
   };
 
   return (
