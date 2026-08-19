@@ -40,11 +40,6 @@ type Shop = {
   distanceKm: number | null;
 };
 
-function extractLocality(address: string) {
-  const match = address.match(/([가-힣0-9]+(?:읍|면|동))/);
-  return match?.[1] ?? null;
-}
-
 function centroid(restaurants: Restaurant[]) {
   const points = restaurants.filter(
     (restaurant) => restaurant.lat !== null && restaurant.lon !== null,
@@ -94,42 +89,10 @@ export default async function StreetPage({ params }: { params: Promise<{ id: str
         : null,
   }));
 
-  // 시·군 전체를 '거리 식당'으로 잡으면 같은 군 안의 20~30km 떨어진 식당까지
-  // 섞일 수 있다. 주소에서 읍·면·동을 읽을 수 있으면 그 생활권을 최우선으로
-  // 묶고, 그렇지 않으면 기존 대표점 반경 8km 안의 식당을 거리 군집으로 본다.
-  const streetLocality = extractLocality(street.address);
-  const localityShops = streetLocality
-    ? allShops.filter((shop) => shop.restaurant.address.includes(streetLocality))
-    : [];
-  const radiusShops = allShops.filter(
-    (shop) => shop.distanceKm !== null && shop.distanceKm <= 8,
-  );
-
-  const clusteredShops =
-    localityShops.length > 0
-      ? localityShops
-      : radiusShops.length > 0
-        ? radiusShops
-        : [...allShops]
-            .sort((a, b) => (a.distanceKm ?? Number.POSITIVE_INFINITY) - (b.distanceKm ?? Number.POSITIVE_INFINITY))
-            .slice(0, 6);
-
-  const representative = centroid(clusteredShops.map((shop) => shop.restaurant)) ??
-    (street.lat !== null && street.lon !== null ? { lat: street.lat, lon: street.lon } : null);
-
-  const shops: Shop[] = clusteredShops
-    .map((shop) => ({
-      ...shop,
-      distanceKm:
-        representative && shop.restaurant.lat !== null && shop.restaurant.lon !== null
-          ? haversineKm(
-              representative.lat,
-              representative.lon,
-              shop.restaurant.lat,
-              shop.restaurant.lon,
-            )
-          : null,
-    }))
+  // 거리 상세에서는 해당 시·군의 대표 음식 관련 식당을 넓게 보여준다.
+  // 거리 대표 아이콘만 실제로 지도에 표시하는 식당들의 좌표 중심으로 이동시켜,
+  // 특정 행정동에 과도하게 좁히지 않으면서도 핀이 식당 분포를 대표하도록 한다.
+  const shops: Shop[] = [...allShops]
     .sort((a, b) => {
       if (a.distanceKm !== null && b.distanceKm !== null) return a.distanceKm - b.distanceKm;
       if (a.distanceKm !== null) return -1;
@@ -137,6 +100,15 @@ export default async function StreetPage({ params }: { params: Promise<{ id: str
       return Number(b.restaurant.isLocalSpecialty) - Number(a.restaurant.isLocalSpecialty);
     })
     .slice(0, 12);
+
+  // 지도에는 최대 8개 식당을 표시한다. 거리 아이콘은 바로 이 식당들의
+  // 중앙점에 놓는다. 좌표가 하나도 없을 때만 원래 거리 좌표를 사용한다.
+  const mapShops = shops
+    .filter((shop) => shop.restaurant.lat !== null && shop.restaurant.lon !== null)
+    .slice(0, 8);
+
+  const representative = centroid(mapShops.map((shop) => shop.restaurant)) ??
+    (street.lat !== null && street.lon !== null ? { lat: street.lat, lon: street.lon } : null);
 
   const markers: MapMarker[] = [];
   if (representative) {
@@ -153,7 +125,7 @@ export default async function StreetPage({ params }: { params: Promise<{ id: str
     });
   }
 
-  for (const shop of shops.slice(0, 8)) {
+  for (const shop of mapShops) {
     if (shop.restaurant.lat === null || shop.restaurant.lon === null) continue;
     markers.push({
       id: `shop-${shop.restaurant.id}`,
@@ -190,7 +162,7 @@ export default async function StreetPage({ params }: { params: Promise<{ id: str
         </p>
         <p className="mt-3 rounded-xl bg-surface-alt px-3 py-2.5 text-[12px] text-fg-muted">
           📍 {street.address}
-          <br />※ 지도 핀은 연결된 거리 식당들의 위치를 바탕으로 계산한 대략적인 중심을 표시합니다.
+          <br />※ 거리 아이콘은 현재 지도에 표시된 관련 식당들의 좌표 중심에 표시됩니다.
         </p>
       </section>
 
@@ -217,8 +189,8 @@ export default async function StreetPage({ params }: { params: Promise<{ id: str
             <h2 className="mt-0.5 font-display text-[22px] text-fg">근처 식당 추천</h2>
           </div>
           <p className="text-right text-[11px] text-fg-muted">
-            같은 거리 생활권의
-            <br />등록 식당 우선
+            해당 시·군의
+            <br />관련 식당 표시
           </p>
         </div>
 
