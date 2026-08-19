@@ -95,7 +95,7 @@ export function RegionMap({
   );
   // effect 의존성은 좌표·강조 여부로만 비교한다. markers는 매 렌더 새
   // 배열이라 참조로 비교하면 지도가 매번 다시 만들어져 깜빡인다.
-  const pointsKey = points.map((p) => `${p.id}:${p.lat}:${p.lon}:${p.highlight}`).join("|");
+  const pointsKey = points.map((p) => `${p.id}:${p.lat}:${p.lon}`).join("|");
 
   useEffect(() => {
     if (!containerRef.current || points.length === 0) return;
@@ -186,7 +186,7 @@ export function RegionMap({
     const marker = markerRefs.current.get(selectedId);
     if (!map || !marker) return;
     const pos = marker.getLatLng();
-    map.panTo(pos, { animate: true });
+    map.flyTo(pos, Math.max(map.getZoom(), 13), { animate: true, duration: 1.15 });
     marker.openTooltip();
   }, [selectedId]);
 
