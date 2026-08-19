@@ -454,6 +454,8 @@ export function recommendFoods(foods: Food[], pref: Preference, limit = 4): Scor
 }
 
 /** 한 식재료가 결과를 독점하지 못하게 하는 상한. */
+export const MAX_PER_INGREDIENT = 1;
+
 /** 같은 핵심 식재료가 이미 뽑힌 뒤 다시 등장할 때 주는 감점.
  * 점수 범위가 0~100이므로 100점 감점이면 서로 다른 재료 후보가 있는 한
  * 상위 5개에 같은 재료가 두 번 들어오지 않는다.
