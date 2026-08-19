@@ -19,6 +19,17 @@ function spicyText(level: number) {
   return ["안 매움", "약간 매움", "매움", "아주 매움"][level] ?? `${level}`;
 }
 
+function restaurantMatchesLocation(restaurant: Food["restaurants"][number], intent: { region?: string; area?: string } | null) {
+  if (!intent) return true;
+  if (intent.region && restaurant.region !== intent.region) return false;
+  if (intent.area) {
+    const area = restaurant.area.replace(/\s+/g, "");
+    const wanted = intent.area.replace(/\s+/g, "");
+    if (!(area.includes(wanted) || wanted.includes(area))) return false;
+  }
+  return true;
+}
+
 
 export function MapChatExplorer({
   streets,
@@ -43,7 +54,10 @@ export function MapChatExplorer({
   const [lastTaste, setLastTaste] = useState("");
   const [inputMode, setInputMode] = useState<"ai" | "category">("ai");
   const [lastCategoryPreference, setLastCategoryPreference] = useState<Preference | null>(null);
+  const [expandedReasonIds, setExpandedReasonIds] = useState<string[]>([]);
   const [categoryResult, setCategoryResult] = useState<CategoryRecommendationResult | null>(null);
+  const [recommendationReasons, setRecommendationReasons] = useState<Record<string, string>>({});
+  const [locationIntent, setLocationIntent] = useState<{ region?: string; area?: string; label?: string } | null>(null);
 
   const selectedStreet = useMemo(
     () => streets.find((street) => street.id === selectedId),
@@ -103,7 +117,8 @@ export function MapChatExplorer({
       const restaurants = food.restaurants
         .filter(
           (restaurant) =>
-            restaurant.lat !== null && restaurant.lon !== null,
+            restaurant.lat !== null && restaurant.lon !== null &&
+            restaurantMatchesLocation(restaurant, locationIntent),
         )
         .sort(
           (a, b) =>
@@ -132,16 +147,17 @@ export function MapChatExplorer({
       firstFoodMarkerByFoodId: firstByFood,
       foodMarkerCount: foodMarkers.length,
     };
-  }, [streets, recommendedFoods, selectedId]);
+  }, [streets, recommendedFoods, selectedId, locationIntent]);
 
 
-  const selectFirstMappedFood = (ids: string[]) => {
+  const selectFirstMappedFood = (ids: string[], intent = locationIntent) => {
     for (const foodId of ids) {
       const food = foods.find((item) => item.id === foodId);
       const restaurant = food?.restaurants
         .filter(
           (item) =>
-            item.lat !== null && item.lon !== null,
+            item.lat !== null && item.lon !== null &&
+            restaurantMatchesLocation(item, intent),
         )
         .sort(
           (a, b) =>
@@ -159,6 +175,9 @@ export function MapChatExplorer({
     setLastCategoryPreference(pref);
     const result = recommendByExactCategory(foods, pref, 5, randomSeed());
     setCategoryResult(result);
+    setRecommendationReasons({});
+    setExpandedReasonIds([]);
+    setLocationIntent(null);
     const shown = result.exact.length > 0 ? result.exact : result.alternatives;
     const ids = shown.map((item) => item.food.id);
     setRecommendedFoodIds(ids);
@@ -182,12 +201,22 @@ export function MapChatExplorer({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ message: text, history: previous, excludeFoodIds }),
       });
-      const data = (await response.json()) as { reply?: string; foodIds?: string[] };
+      const data = (await response.json()) as {
+        reply?: string;
+        foodIds?: string[];
+        reasons?: Record<string, string>;
+        understood?: string[];
+        location?: { region?: string; area?: string; label?: string } | null;
+      };
       const ids = data.foodIds ?? [];
+      const intent = data.location ?? null;
       setRecommendedFoodIds(ids);
+      setExpandedReasonIds([]);
+      setRecommendationReasons(data.reasons ?? {});
+      setLocationIntent(intent);
 
-      // 지도에 표시할 수 있는 첫 추천 음식의 광주·전남 식당으로 이동한다.
-      selectFirstMappedFood(ids);
+      // 사용자가 지역을 말했으면 그 지역 식당 좌표를 우선 선택한다.
+      selectFirstMappedFood(ids, intent);
 
       setMessages((current) => [
         ...current,
@@ -221,6 +250,9 @@ export function MapChatExplorer({
     setInputMode((mode) => (mode === "ai" ? "category" : "ai"));
     setRecommendedFoodIds([]);
     setCategoryResult(null);
+    setRecommendationReasons({});
+    setExpandedReasonIds([]);
+    setLocationIntent(null);
     setSelectedId(undefined);
   };
 
@@ -239,9 +271,9 @@ export function MapChatExplorer({
             <Link href="/" className="text-[12px] font-bold text-brand">
               ← 전라맛도
             </Link>
-            <p className="mt-1 font-display text-[20px] text-fg">전라남도 음식거리 지도</p>
+            <p className="mt-1 font-display text-[20px] text-fg">광주 · 전남 음식 지도</p>
             <p className="mt-0.5 text-[12px] text-fg-muted">
-              전남 음식거리를 보고, AI 추천 음식 위치도 확인하세요
+              전남 음식거리를 보고, 자연어로 광주·전남 음식점도 찾아보세요
             </p>
             <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-fg-muted">
               {foodMarkerCount === 0 ? (
@@ -421,16 +453,16 @@ export function MapChatExplorer({
                   <>
                     <p className="text-[13px] font-bold text-accent">선택 조건 정확 일치</p>
                     <p className="mt-1 text-[12px] leading-relaxed text-fg-muted">
-                      선택한 월·맵기·국물·날것·주재료를 모두 정확히 만족하는 음식이
-                      {` ${categoryResult.exactTotal}개`} 있습니다. 아래에는 정확 일치 음식만 보여줘요.
+                      선택한 월·날것/익힘·주재료·국물 조건을 만족하는 음식이
+                      {` ${categoryResult.exactTotal}개`} 있습니다. 맵기는 차이만큼 감점해 순위를 정해요.
                     </p>
                   </>
                 ) : (
                   <>
                     <p className="text-[13px] font-bold text-brand">해당 조건의 음식이 없습니다 · 대체 추천</p>
                     <p className="mt-1 text-[12px] leading-relaxed text-fg-muted">
-                      선택한 월까지 포함해 모든 조건을 정확히 만족하는 음식이 없어,
-                      맞는 조건 수가 많은 음식부터 대체 추천합니다.
+                      선택한 월과 핵심 조건(날것/익힘·주재료·국물)을 모두 만족하는 음식이 없어,
+                      핵심 조건 우선순위에 가장 가까운 음식부터 대체 추천합니다. 맵기는 대체 추천 판정에 사용하지 않아요.
                       {categoryResult.exactTasteAnySeason > 0 && (
                         <> 취향 조건만 보면 정확 일치 음식은 {categoryResult.exactTasteAnySeason}개 있지만 선택한 달 제철이 아닙니다.</>
                       )}
@@ -481,6 +513,46 @@ export function MapChatExplorer({
                             대체 추천 차이 · {categoryScoreByFoodId.get(food.id)?.mismatches.join(" · ")}
                           </p>
                         )}
+                      {recommendationReasons[food.id] && (
+                        <div className="mt-2">
+                          <button
+                            type="button"
+                            aria-expanded={expandedReasonIds.includes(food.id)}
+                            onClick={() =>
+                              setExpandedReasonIds((current) =>
+                                current.includes(food.id)
+                                  ? current.filter((id) => id !== food.id)
+                                  : [...current, food.id],
+                              )
+                            }
+                            className="flex w-full items-center justify-between rounded-xl border border-accent/25 bg-accent-soft px-3 py-2.5 text-left transition hover:border-accent/50"
+                          >
+                            <span className="text-[11px] font-bold text-accent">AI 선정 이유 보기</span>
+                            <span
+                              aria-hidden="true"
+                              className={`text-[12px] text-accent transition-transform ${
+                                expandedReasonIds.includes(food.id) ? "rotate-180" : ""
+                              }`}
+                            >
+                              ▾
+                            </span>
+                          </button>
+                          {expandedReasonIds.includes(food.id) && (
+                            <div className="rounded-b-xl border-x border-b border-accent/25 bg-surface px-3 py-2.5">
+                              <p className="text-[11px] leading-relaxed text-fg">
+                                {recommendationReasons[food.id]}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      <div className="mt-2.5 flex flex-wrap gap-2">
+                        <Link
+                          href={`/food/${food.id}${locationIntent?.label ? `?place=${encodeURIComponent(locationIntent.label)}` : ""}`}
+                          className="rounded-lg bg-brand px-3 py-1.5 text-[11px] font-bold text-fg-inverse transition hover:opacity-90"
+                        >
+                          음식 자세히 보기 →
+                        </Link>
                       {firstFoodMarkerByFoodId.get(food.id) ? (
                         <button
                           type="button"
@@ -494,6 +566,7 @@ export function MapChatExplorer({
                           {mapUnavailableReason(food)}
                         </p>
                       )}
+                      </div>
                       <div className="mt-2.5 flex flex-wrap gap-1.5 text-[10px]">
                         <span className="rounded-full bg-surface px-2 py-1 text-fg-muted">
                           🌶 {spicyText(food.spicy)}
@@ -524,7 +597,7 @@ export function MapChatExplorer({
           <div className="border-t border-line p-4">
             {messages.length === 1 && (
               <div className="mb-3 flex flex-wrap gap-1.5">
-                {["매콤한 국물 해산물", "안 매운 고기 요리", "회 말고 담백한 음식"].map(
+                {["엄청 매운 음식", "광주에서 먹을 해산물", "회 말고 담백한 음식"].map(
                   (example) => (
                     <button
                       key={example}
@@ -566,7 +639,7 @@ export function MapChatExplorer({
               </button>
             </div>
             <p className="mt-2 text-[10px] leading-relaxed text-fg-muted">
-              지도는 전라남도 권역 안에서만 탐색됩니다. 처음에는 음식특화거리를 보여주고, 추천 후에는 거리 핀을 숨긴 뒤 해당 메뉴를 취급하는 광주·전남 식당을 점으로 표시합니다.
+              처음에는 전남 음식특화거리를 보여주고, 자연어 추천 후에는 해당 메뉴를 취급하는 광주·전남 식당을 점으로 표시합니다. 지역을 말하면 그 지역 식당을 우선 표시합니다.
             </p>
           </div>
           )}

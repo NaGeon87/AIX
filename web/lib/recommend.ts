@@ -59,10 +59,12 @@ export const INGREDIENT_OPTIONS: IngredientPreference[] = [...CATEGORIES, "상�
 
 /** 지표별 배점. 합이 100이 되게 두어 화면의 "취향 일치 87" 이 곧 백분율이다. */
 export const AXIS_WEIGHTS = {
-  spicy: 30,
-  soup: 25,
-  raw: 20,
-  ingredient: 25,
+  // 우선순위: 날것/익힘 > 주재료 > 국물 > 맵기.
+  // 맵기는 오직 감점 요소로만 쓰며 대체 추천 판정에는 사용하지 않는다.
+  raw: 40,
+  ingredient: 30,
+  soup: 20,
+  spicy: 10,
 } as const;
 
 export type AxisKey = keyof typeof AXIS_WEIGHTS;
@@ -296,8 +298,8 @@ export interface ScoredFood {
 function axisSatisfied(pref: Preference, food: Food, axis: AxisKey): boolean {
   switch (axis) {
     case "spicy":
-      // 한 칸 차이는 어긋났다고 보지 않는다. 0~3짜리 눈금이라 한 칸은 오차다.
-      return Math.abs(pref.spicy - food.spicy) < 2;
+      // 맵기는 정확/대체 판정 조건이 아니다. 순위에서 감점만 한다.
+      return true;
     case "soup":
       return pref.soup === 1 || (pref.soup === 2) === food.hasSoup;
     case "raw":
@@ -365,10 +367,7 @@ export function substitutionNotice(
 function describeMismatches(pref: Preference, food: Food): string[] {
   const notes: string[] = [];
 
-  const gap = Math.abs(pref.spicy - food.spicy);
-  if (gap >= 2) {
-    notes.push(food.spicy > pref.spicy ? "고른 것보다 맵습니다" : "고른 것보다 덜 맵습니다");
-  }
+  // 맵기는 점수 감점만 적용한다. 카드의 "대체 추천 차이" 사유에는 넣지 않는다.
   if (pref.soup === 2 && !food.hasSoup) notes.push("국물 요리는 아닙니다");
   if (pref.soup === 0 && food.hasSoup) notes.push("국물이 있는 요리입니다");
   if (pref.raw === "O" && !food.isRaw) notes.push("날것은 아닙니다");
@@ -455,7 +454,11 @@ export function recommendFoods(foods: Food[], pref: Preference, limit = 4): Scor
 }
 
 /** 한 식재료가 결과를 독점하지 못하게 하는 상한. */
-export const MAX_PER_INGREDIENT = 1;
+/** 같은 핵심 식재료가 이미 뽑힌 뒤 다시 등장할 때 주는 감점.
+ * 점수 범위가 0~100이므로 100점 감점이면 서로 다른 재료 후보가 있는 한
+ * 상위 5개에 같은 재료가 두 번 들어오지 않는다.
+ */
+export const INGREDIENT_DUPLICATE_PENALTY = 100;
 
 /** 조리법도 겹치지 않게 한다. 넷 다 조림이면 재료가 달라도 같은 상이다. */
 export const MAX_PER_METHOD = 1;
@@ -535,8 +538,7 @@ function preferenceSeed(pref: Preference): string {
  * 사는 것이지, 엉뚱한 음식을 올릴 이유는 되지 못한다.
  */
 function diversify(scored: ScoredFood[], limit: number): ScoredFood[] {
-  // 같은 메뉴가 재료만 다르게 두 번 들어와 있는 경우가 있다. 원본에서
-  // "우렁이 쌈밥 정식, 전복들깨탕"이 들깨 행과 전복 행으로 각각 잡히는 식이다.
+  // 동일 메뉴 중복은 먼저 제거한다.
   const seenNames = new Set<string>();
   const pending = scored.filter((item) => {
     if (seenNames.has(item.food.name)) return false;
@@ -546,45 +548,37 @@ function diversify(scored: ScoredFood[], limit: number): ScoredFood[] {
 
   const picked: ScoredFood[] = [];
   const ingredientCount = new Map<string, number>();
-  const methodCount = new Map<string, number>();
-  // 상한에 걸려 한 번이라도 건너뛰어진 항목. 화면에서 그 사실을 밝혀야
-  // "점수가 높은데 왜 아래 있지?"가 생기지 않는다.
-  const passedOver = new Set<string>();
-
-  /** 점수와 무관하게 지키는 규칙 — 같은 재료, 그리고 같아 보이는 음식. */
-  const allowedAlways = (item: ScoredFood) =>
-    (ingredientCount.get(item.food.ingredient || item.food.name) ?? 0) < MAX_PER_INGREDIENT &&
-    !picked.some((taken) => looksSameDish(taken.food, item.food));
-
-  /** 값이 비싸면 포기하는 규칙 — 조리법. */
-  const allowedIfCheap = (item: ScoredFood) =>
-    (methodCount.get(cookingMethod(item.food.name)) ?? 0) < MAX_PER_METHOD;
 
   while (picked.length < limit && pending.length > 0) {
-    // 절대 규칙까지 막히면(고를 것이 없으면) 어쩔 수 없이 점수순으로 간다.
-    const eligible = pending.filter(allowedAlways);
-    const from = eligible.length > 0 ? eligible : pending;
+    let bestIndex = 0;
+    let bestAdjusted = -Infinity;
 
-    const cheapest = from.find(allowedIfCheap);
-    const item =
-      cheapest && from[0].match - cheapest.match <= DIVERSITY_MAX_DROP ? cheapest : from[0];
+    for (let index = 0; index < pending.length; index += 1) {
+      const item = pending[index];
+      const ingredient = item.food.ingredient || item.food.name;
+      const duplicateCount = ingredientCount.get(ingredient) ?? 0;
+      const sameDishPenalty = picked.some((taken) => looksSameDish(taken.food, item.food)) ? 200 : 0;
+      const adjusted =
+        item.match -
+        duplicateCount * INGREDIENT_DUPLICATE_PENALTY -
+        sameDishPenalty;
 
-    // 이 항목을 위로 올리느라 건너뛴 것들은 상한 탓에 밀린 것이다.
-    for (const skipped of pending) {
-      if (skipped === item) break;
-      passedOver.add(skipped.food.id);
+      if (adjusted > bestAdjusted) {
+        bestAdjusted = adjusted;
+        bestIndex = index;
+      }
     }
 
-    pending.splice(pending.indexOf(item), 1);
+    const [item] = pending.splice(bestIndex, 1);
     const ingredient = item.food.ingredient || item.food.name;
-    const method = cookingMethod(item.food.name);
-    ingredientCount.set(ingredient, (ingredientCount.get(ingredient) ?? 0) + 1);
-    methodCount.set(method, (methodCount.get(method) ?? 0) + 1);
-    picked.push(passedOver.has(item.food.id) ? { ...item, demoted: true } : item);
+    const duplicateCount = ingredientCount.get(ingredient) ?? 0;
+    ingredientCount.set(ingredient, duplicateCount + 1);
+    picked.push(duplicateCount > 0 ? { ...item, demoted: true } : item);
   }
 
   return picked;
 }
+
 
 
 export interface CategoryRecommendationResult {
@@ -599,12 +593,13 @@ export interface CategoryRecommendationResult {
 }
 
 /**
- * 카테고리 입력에서는 사용자가 직접 고른 값을 '점수'가 아니라 조건으로 본다.
- * 맵기 3이면 spicy === 3만, 해산물이면 해산물이 포함된 음식만 정확 일치다.
- * 국물의 '상관없음'과 주재료의 '상관없음'만 필터에서 제외한다.
+ * 카테고리 입력에서 날것/익힘·주재료·국물은 핵심 조건으로 본다.
+ * 맵기는 정확 일치 필터에서 제외하고 점수 감점으로만 반영한다.
+ * 따라서 맵기가 완전히 달라도 그것만으로 대체 추천이 되지는 않는다.
  */
 export function satisfiesCategoryTasteExactly(pref: Preference, food: Food): boolean {
-  if (food.spicy !== pref.spicy) return false;
+  // 맵기는 여기서 필터링하지 않는다. 완전히 달라도 대체 추천이 아니라
+  // 단순 감점으로만 처리한다.
   if (pref.soup !== 1 && food.hasSoup !== (pref.soup === 2)) return false;
   if (food.isRaw !== (pref.raw === "O")) return false;
   if (
@@ -616,18 +611,19 @@ export function satisfiesCategoryTasteExactly(pref: Preference, food: Food): boo
   return true;
 }
 
-function categoryConditionHits(pref: Preference, food: Food): number {
-  let hits = 0;
-  if (food.spicy === pref.spicy) hits += 1;
-  if (pref.soup === 1 || food.hasSoup === (pref.soup === 2)) hits += 1;
-  if (food.isRaw === (pref.raw === "O")) hits += 1;
+function categoryConditionScore(pref: Preference, food: Food): number {
+  // 대체 추천 우선순위 역시 날것/익힘 > 주재료 > 국물 순이다.
+  // 맵기는 explainMatch의 10점 감점으로만 반영한다.
+  let score = 0;
+  if (food.isRaw === (pref.raw === "O")) score += 40;
   if (
     pref.ingredient === "상관없음" ||
     food.mainIngredients.includes(pref.ingredient)
   ) {
-    hits += 1;
+    score += 30;
   }
-  return hits;
+  if (pref.soup === 1 || food.hasSoup === (pref.soup === 2)) score += 20;
+  return score;
 }
 
 function monthGap(months: number[], target: number): number {
@@ -643,12 +639,12 @@ function monthGap(months: number[], target: number): number {
 /**
  * 카테고리 선택 전용 추천.
  *
- * 1) 선택 월 + 맵기/국물/날것/주재료를 모두 정확히 만족하는 음식이 있으면
- *    그 음식만 반환한다. 결과가 2개뿐이면 2개만 보여 주며 대체 음식으로
- *    5개를 억지로 채우지 않는다.
- * 2) 완전 일치가 0개면 전체 음식 중 '정확히 맞춘 조건 수'가 많은 순으로
- *    대체 추천한다. 같은 수라면 선택 월 제철, 기존 취향 점수, 제철 월과의
- *    거리 순으로 정렬한다.
+ * 1) 선택 월 + 날것/익힘·주재료·국물 핵심 조건을 만족하는 음식이 있으면
+ *    그 안에서 맵기 차이는 감점만 하여 순위를 정한다.
+ * 2) 핵심 조건 완전 일치가 0개일 때만 대체 추천한다. 대체 추천도
+ *    날것/익힘 → 주재료 → 국물 → 맵기 감점 순으로 정렬한다.
+ * 3) 최종 상위 결과는 동일 핵심 식재료의 두 번째 메뉴부터 100점 패널티를
+ *    받아, 가능한 한 서로 다른 재료로 구성한다.
  */
 export function recommendByExactCategory(
   foods: Food[],
@@ -678,9 +674,9 @@ export function recommendByExactCategory(
       demoted: false,
     }))
     .sort((a, b) => {
-      const hitDiff =
-        categoryConditionHits(pref, b.food) - categoryConditionHits(pref, a.food);
-      if (hitDiff !== 0) return hitDiff;
+      const conditionDiff =
+        categoryConditionScore(pref, b.food) - categoryConditionScore(pref, a.food);
+      if (conditionDiff !== 0) return conditionDiff;
       if (a.inSeason !== b.inSeason) return a.inSeason ? -1 : 1;
       if (b.match !== a.match) return b.match - a.match;
       const gapDiff = monthGap(a.food.months, pref.month) - monthGap(b.food.months, pref.month);
@@ -688,16 +684,9 @@ export function recommendByExactCategory(
       return tieHash(a.food.id, seed) - tieHash(b.food.id, seed);
     });
 
-  const seenAlternativeNames = new Set<string>();
-  const uniqueAlternatives = alternatives.filter((item) => {
-    if (seenAlternativeNames.has(item.food.name)) return false;
-    seenAlternativeNames.add(item.food.name);
-    return true;
-  });
-
   return {
     exact: [],
-    alternatives: uniqueAlternatives.slice(0, limit),
+    alternatives: diversify(alternatives, limit),
     exactTotal: 0,
     exactTasteAnySeason: exactTaste.length,
   };
