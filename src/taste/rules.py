@@ -142,21 +142,28 @@ NO_SOUP_OVERRIDE = (
 # 이름에 국물 키워드가 없어도 국물이 있는 것.
 EXTRA_SOUP = ("국수", "냉면", "우동", "메밀국수")
 # 국수류 중 비빔은 국물이 없다.
-NOODLE_NO_SOUP = ("비빔", "짜장", "쟁반", "골동면", "초계")
+NOODLE_NO_SOUP = ("비빔", "짜장", "쟁반", "골동면", "들기름")
 
 
 def detect_soup(text: str) -> tuple[bool, bool]:
-    """(국물 여부, 조리법을 짚었는지) 를 돌려준다."""
+    """(국물 여부, 조리법을 짚었는지) 를 돌려준다.
+
+    `죽순`의 `죽`을 죽(粥)으로 읽는 식의 부분문자열 오탐과, `비빔국수`가
+    `국수` 때문에 국물 음식으로 먼저 확정되는 문제를 막는다.
+    """
+    method_text = text.replace("죽순", "")
     for kw in NO_SOUP_OVERRIDE:
-        if kw in text:
+        if kw in method_text:
             return False, True
+    if any(x in method_text for x in NOODLE_NO_SOUP) and any(
+        noodle in method_text for noodle in ("국수", "냉면", "우동", "면")
+    ):
+        return False, True
     for kw in SOUP_KEYWORDS:
-        if kw in text:
+        if kw in method_text:
             return True, True
     for kw in EXTRA_SOUP:
-        if kw in text:
-            if any(x in text for x in NOODLE_NO_SOUP):
-                return False, True
+        if kw in method_text:
             return True, True
     # 국물이 없다고 확실히 말할 수 있는 조리법
     for kw in ("구이", "회", "무침", "전", "튀김", "볶음", "찜", "조림", "밥",
@@ -295,24 +302,41 @@ RAW_KEYWORDS = (
 )
 # "회"를 품지만 익힌 것.
 NOT_RAW_OVERRIDE = (
-    "숙회", "회무침전골", "회덮밥탕", "구이", "튀김", "전골", "찜", "탕",
-    "국", "찌개", "볶음", "조림", "샤브", "라면", "죽", "만두",
+    "숙회", "죽순회", "우렁이회", "우렁죽순회", "회무침전골", "회덮밥탕",
+    "구이", "튀김", "전골", "찜", "탕", "국", "찌개", "볶음", "조림",
+    "샤브", "라면", "죽", "만두",
 )
 # 위 예외에 걸려도 여전히 날것인 조합.
 RAW_STRONG = ("산낙지", "탕탕이", "생굴", "육회", "물회", "사시미", "홍어회", "세꼬시")
+
+# 날것 재료명이 들어 있어도 조리법이 명시적으로 익힘이면 익힌 음식이다.
+# 산낙지구이·산낙지전골·산낙지갈비탕이 `산낙지` 한 단어 때문에 날것으로
+# 남던 오류를 막는다. 탕탕이·물회·육회처럼 이름 자체가 날것 조리법인 것은 제외한다.
+COOKED_RAW_METHODS = (
+    "구이", "전골", "갈비탕", "볶음", "조림", "찜", "찌개", "라면", "죽",
+    "만두", "수제비", "칼국수", "짬뽕", "국밥", "백숙", "삼계탕", "튀김",
+)
+RAW_METHOD_EXCEPTIONS = ("탕탕이", "물회", "육회", "회무침", "회덮밥", "사시미")
 
 
 def detect_raw(text: str, course: str) -> tuple[bool, bool]:
     """(날것 여부, 근거를 짚었는지)."""
     if course in ("디저트", "음료"):
         return False, True
+    method_text = text
+    has_raw_exception = any(kw in method_text for kw in RAW_METHOD_EXCEPTIONS)
+    if not has_raw_exception and (
+        any(kw in method_text for kw in COOKED_RAW_METHODS)
+        or method_text.endswith("전")
+    ):
+        return False, True
     for kw in RAW_STRONG:
-        if kw in text:
+        if kw in method_text:
             return True, True
-    if any(kw in text for kw in NOT_RAW_OVERRIDE):
+    if any(kw in method_text for kw in NOT_RAW_OVERRIDE):
         return False, True
     for kw in RAW_KEYWORDS:
-        if kw in text:
+        if kw in method_text:
             return True, True
     return False, False
 
@@ -386,6 +410,7 @@ ING_EXCEPTIONS: dict[str, tuple[list[str], str]] = {
     "죽순게장 한우정식|죽순": ([SEAFOOD, VEGGIE], "죽순게장이 주 메뉴이고 한우는 상차림 구성이다"),
     "홍어일품상|홍어": ([SEAFOOD], "대표는 홍어. 돼지수육이 함께 나오는지는 이름에 없다"),
     "고추장구이|고추": ([], "고추장은 양념이라 재료 근거가 아니다. 무엇을 구웠는지 이름에 없다"),
+    "전복들깨 순두부|전복": ([SEAFOOD, VEGGIE], "전복과 순두부가 메뉴명에 모두 명시된 복합 주재료 음식이다"),
 }
 
 
@@ -473,11 +498,12 @@ def score_menu(menu_name: str, ingredient: str = "") -> TasteProfile:
 
     # 맵기와 주재료는 메뉴명만 본다. 매칭된 제철 식재료를 섞으면 '갈치'가
     # 맵기를 정하고, 곁들이 식재료가 대표 재료를 밀어낸다.
-    # 국물·날것은 haystack 그대로 둔다. 조리법 신호라 식재료와 부딪히지 않는다.
+    # 국물·날것도 메뉴명만 본다. ingredient는 제철 매칭어라 조리법이 아니며,
+    # 여기에 섞으면 `죽순`의 `죽`, `산낙지` 같은 재료명이 조리 상태를 오염시킨다.
     spicy = resolve_spicy(menu, course)
     ing = resolve_ingredients(menu_key, menu, ingredient)
-    has_soup, soup_sure = detect_soup(haystack)
-    is_raw, raw_sure = detect_raw(haystack, course)
+    has_soup, soup_sure = detect_soup(menu)
+    is_raw, raw_sure = detect_raw(menu, course)
 
     spicy_level, spicy_sure = spicy["level"], spicy["matched"] is not None
     ingredients, ing_sure = ing["labels"], ing["basis"] != "근거 없음"

@@ -62,6 +62,8 @@ export function MapChatExplorer({
   const [expandedWhyIds, setExpandedWhyIds] = useState<string[]>([]);
   const [expandedScoreIds, setExpandedScoreIds] = useState<string[]>([]);
   const [categoryResult, setCategoryResult] = useState<CategoryRecommendationResult | null>(null);
+  const [categoryRound, setCategoryRound] = useState(0);
+  const [categorySeenFoodIds, setCategorySeenFoodIds] = useState<string[]>([]);
   const [locationIntent, setLocationIntent] = useState<{ region?: string; area?: string; label?: string } | null>(null);
 
   const selectedStreet = useMemo(
@@ -122,11 +124,9 @@ export function MapChatExplorer({
   }, [recommendedFoods, scoringPreference]);
 
   const categoryScoreByFoodId = useMemo(() => {
-    const map = new Map<string, CategoryRecommendationResult["alternatives"][number]>();
+    const map = new Map<string, CategoryRecommendationResult["results"][number]>();
     if (!categoryResult) return map;
-    for (const item of [...categoryResult.exact, ...categoryResult.alternatives]) {
-      map.set(item.food.id, item);
-    }
+    for (const item of categoryResult.results) map.set(item.food.id, item);
     return map;
   }, [categoryResult]);
 
@@ -211,17 +211,26 @@ export function MapChatExplorer({
     setSelectedId(undefined);
   };
 
-  const recommendByCategory = (pref: Preference) => {
-    setLastCategoryPreference(pref);
-    const result = recommendByExactCategory(foods, pref, 5, randomSeed());
+  const applyCategoryRecommendation = (
+    pref: Preference,
+    round: number,
+    seenFoodIds: string[],
+  ) => {
+    const result = recommendByExactCategory(foods, pref, 5, randomSeed(), round, seenFoodIds);
     setCategoryResult(result);
+    setCategoryRound(round);
     setExpandedWhyIds([]);
     setExpandedScoreIds([]);
     setLocationIntent(null);
-    const shown = result.exact.length > 0 ? result.exact : result.alternatives;
-    const ids = shown.map((item) => item.food.id);
+    const ids = result.results.map((item) => item.food.id);
     setRecommendedFoodIds(ids);
     selectFirstMappedFood(ids);
+  };
+
+  const recommendByCategory = (pref: Preference) => {
+    setLastCategoryPreference(pref);
+    setCategorySeenFoodIds([]);
+    applyCategoryRecommendation(pref, 0, []);
   };
 
   const submit = async (preset?: string, excludeFoodIds: string[] = []) => {
@@ -278,7 +287,9 @@ export function MapChatExplorer({
   const refreshRecommendations = () => {
     if (pending) return;
     if (inputMode === "category" && lastCategoryPreference) {
-      recommendByCategory(lastCategoryPreference);
+      const seen = Array.from(new Set([...categorySeenFoodIds, ...recommendedFoodIds]));
+      setCategorySeenFoodIds(seen);
+      applyCategoryRecommendation(lastCategoryPreference, categoryRound + 1, seen);
       return;
     }
     if (!lastTaste) return;
@@ -289,6 +300,8 @@ export function MapChatExplorer({
     setInputMode((mode) => (mode === "ai" ? "category" : "ai"));
     setRecommendedFoodIds([]);
     setCategoryResult(null);
+    setCategoryRound(0);
+    setCategorySeenFoodIds([]);
     setExpandedWhyIds([]);
     setExpandedScoreIds([]);
     setLocationIntent(null);
@@ -479,46 +492,10 @@ export function MapChatExplorer({
               />
             )}
 
-            {inputMode === "category" && categoryResult && (
-              <div
-                className={`mt-5 rounded-2xl border px-4 py-3 ${
-                  categoryResult.exact.length > 0
-                    ? "border-accent/40 bg-accent-soft"
-                    : "border-brand/50 bg-brand-soft"
-                }`}
-                role="status"
-              >
-                {categoryResult.exact.length > 0 ? (
-                  <>
-                    <p className="text-[13px] font-bold text-accent">선택 조건 정확 일치</p>
-                    <p className="mt-1 text-[12px] leading-relaxed text-fg-muted">
-                      선택한 월·날것/익힘·주재료·국물 조건을 만족하는 음식이
-                      {` ${categoryResult.exactTotal}개`} 있습니다. 맵기는 차이만큼 감점해 순위를 정해요.
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <p className="text-[13px] font-bold text-brand">해당 조건의 음식이 없습니다 · 대체 추천</p>
-                    <p className="mt-1 text-[12px] leading-relaxed text-fg-muted">
-                      선택한 월과 핵심 조건(날것/익힘·주재료·국물)을 모두 만족하는 음식이 없어,
-                      핵심 조건 우선순위에 가장 가까운 음식부터 대체 추천합니다. 맵기는 대체 추천 판정에 사용하지 않아요.
-                      {categoryResult.exactTasteAnySeason > 0 && (
-                        <> 취향 조건만 보면 정확 일치 음식은 {categoryResult.exactTasteAnySeason}개 있지만 선택한 달 제철이 아닙니다.</>
-                      )}
-                    </p>
-                  </>
-                )}
-              </div>
-            )}
-
             {recommendedFoods.length > 0 && (
               <section className="mt-5 border-t border-line pt-4">
                 <div className="mb-2 flex items-center justify-between gap-3">
-                  <p className="text-[12px] font-bold text-fg-muted">
-                    {inputMode === "category" && categoryResult?.exact.length === 0
-                      ? "대체 추천 음식"
-                      : "추천 음식"}
-                  </p>
+                  <p className="text-[12px] font-bold text-fg-muted">추천 음식</p>
                   <button
                     type="button"
                     onClick={refreshRecommendations}
@@ -530,7 +507,14 @@ export function MapChatExplorer({
                 </div>
                 <div className="space-y-2.5">
                   {recommendedFoods.map((food, index) => (
-                    <article key={food.id} className="rounded-2xl border border-line bg-canvas p-3.5">
+                    <article
+                      key={food.id}
+                      className={`rounded-2xl border bg-canvas p-3.5 ${
+                        inputMode === "category" && categoryScoreByFoodId.get(food.id)?.substitute
+                          ? "border-2 border-brand"
+                          : "border-line"
+                      }`}
+                    >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <p className="text-[10px] font-bold text-brand">추천 {index + 1}</p>
@@ -546,10 +530,9 @@ export function MapChatExplorer({
                         </span>
                       </div>
                       {inputMode === "category" &&
-                        categoryResult?.exact.length === 0 &&
-                        (categoryScoreByFoodId.get(food.id)?.mismatches.length ?? 0) > 0 && (
-                          <p className="mt-2 rounded-xl bg-brand-soft px-3 py-2 text-[11px] leading-relaxed text-brand">
-                            대체 추천 차이 · {categoryScoreByFoodId.get(food.id)?.mismatches.join(" · ")}
+                        categoryScoreByFoodId.get(food.id)?.substitute && (
+                          <p className="mt-2 text-[11px] font-bold leading-relaxed text-brand">
+                            대체 추천 사유 · {categoryScoreByFoodId.get(food.id)?.substitutionReasons?.join(" · ")}
                           </p>
                         )}
                       <div className="mt-2">
@@ -673,10 +656,27 @@ export function MapChatExplorer({
                                 </div>
                                 <div className="mt-3 border-t border-line pt-2 text-[10px] leading-relaxed text-fg-muted">
                                   <p>근거 신뢰도 보정 × {explanation.credibility.toFixed(2)} → 취향 점수 {explanation.score}점</p>
-                                  <p className={duplicatedIngredient ? "mt-1 font-bold text-brand" : "mt-1"}>
-                                    식재료 다양성 패널티: {duplicatePenalty > 0 ? `-${duplicatePenalty}점` : "0점"}
-                                    {duplicatedIngredient ? ` · 앞선 추천에 ${food.ingredient || food.name} 재료가 이미 있어 감점` : " · 앞선 추천과 핵심 식재료 중복 없음"}
-                                  </p>
+                                  {inputMode === "category" ? (() => {
+                                    const item = categoryScoreByFoodId.get(food.id);
+                                    const seasonBonus = item?.seasonBonus ?? 0;
+                                    const diversityPenalty = item?.diversityPenalty ?? 0;
+                                    const finalScore = item?.rankingScore ?? explanation.score;
+                                    return (
+                                      <>
+                                        <p className="mt-1">제철 보너스: +{seasonBonus}점 · 선택 월 정확 일치 +12 / ±1개월 +6 / ±2개월 +3</p>
+                                        <p className={diversityPenalty > 0 ? "mt-1 font-bold text-brand" : "mt-1"}>
+                                          식재료 다양성 보정: {diversityPenalty > 0 ? `-${diversityPenalty}점` : "0점"}
+                                        </p>
+                                        <p className="mt-1 font-bold text-fg">최종 추천 점수: {Math.round(finalScore)}점</p>
+                                        <p className="mt-1">첫 추천은 같은 식재료를 가능한 한 1개만, 다른 추천 보기에서는 화면당 최대 2개까지 허용합니다.</p>
+                                      </>
+                                    );
+                                  })() : (
+                                    <p className={duplicatedIngredient ? "mt-1 font-bold text-brand" : "mt-1"}>
+                                      식재료 다양성 패널티: {duplicatePenalty > 0 ? `-${duplicatePenalty}점` : "0점"}
+                                      {duplicatedIngredient ? ` · 앞선 추천에 ${food.ingredient || food.name} 재료가 이미 있어 감점` : " · 앞선 추천과 핵심 식재료 중복 없음"}
+                                    </p>
+                                  )}
                                   {inputMode === "ai" && (
                                     <p className="mt-1">
                                       자연어 모드에서는 이 점수로 후보를 만들고, 외부 LLM의 문맥 판단과 식재료 다양성 보정을 함께 사용해 최종 순서를 결정합니다.

@@ -279,14 +279,24 @@ export function preferenceMatch(pref: TastePreference, food: ScorableFood): numb
 
 export interface ScoredFood {
   food: Food;
-  /** 0~100. 취향 일치도. */
+  /** 0~100. 날것/주재료/국물/맵기로 계산한 취향 점수. */
   match: number;
-  /** 이번 달 제철이면 true. 인접 월로 넓혀 잡은 경우 false. */
+  /** 선택한 달이 음식의 제철 월에 정확히 포함되는가. */
   inSeason: boolean;
-  /** 사용자 선택과 어긋난 지표들 — 카드에 "다만 …" 문구로 쓴다. */
+  /** 사용자 선택과 어긋난 핵심 지표. 맵기는 대체 추천 사유로 세지 않는다. */
   mismatches: string[];
-  /** 같은 재료 상한에 걸려 점수보다 뒤로 밀렸으면 true. */
+  /** 다양성 규칙 때문에 점수순 원래 위치보다 뒤로 밀렸는가. */
   demoted: boolean;
+  /** 선택 월과의 근접도 보너스. 취향 100점과 별도로 최대 12점. */
+  seasonBonus?: number;
+  /** 취향 점수 + 제철 보너스 - 다양성 패널티. */
+  rankingScore?: number;
+  /** 핵심 조건(날것/익힘·주재료·국물)을 하나 이상 놓친 보충 추천인가. */
+  substitute?: boolean;
+  /** 대체 추천으로 분류된 이유. */
+  substitutionReasons?: string[];
+  /** 같은 식재료가 같은 결과 묶음에서 반복될 때 적용한 감점. */
+  diversityPenalty?: number;
 }
 
 /**
@@ -584,52 +594,50 @@ function diversify(scored: ScoredFood[], limit: number): ScoredFood[] {
 
 
 export interface CategoryRecommendationResult {
-  /** 선택한 월과 모든 취향 조건을 정확히 만족하는 결과. */
+  /** 화면에 실제로 보여 줄 5개. 정상 추천과 대체 추천이 섞일 수 있다. */
+  results: ScoredFood[];
+  /** results 중 핵심 조건을 만족하는 일반 추천. */
   exact: ScoredFood[];
-  /** exact가 하나도 없을 때만 보여 주는 대체 추천. */
+  /** results 중 핵심 조건을 놓친 대체 추천. */
   alternatives: ScoredFood[];
-  /** 선택한 월까지 포함한 완전 일치 후보 수. */
+  /** 전체 데이터에서 핵심 취향 조건을 만족하는 음식 수(월과 무관). */
   exactTotal: number;
-  /** 월을 빼면 취향 조건을 정확히 만족하는 음식 수. */
+  /** 하위 호환용. exactTotal과 같다. */
   exactTasteAnySeason: number;
+  /** 0이면 첫 추천, 1 이상이면 ‘다른 추천 보기’ 결과. */
+  round: number;
 }
 
 /**
- * 카테고리 입력에서 날것/익힘·주재료·국물은 핵심 조건으로 본다.
- * 맵기는 정확 일치 필터에서 제외하고 점수 감점으로만 반영한다.
- * 따라서 맵기가 완전히 달라도 그것만으로 대체 추천이 되지는 않는다.
+ * 카테고리 추천에서 ‘대체 추천’ 여부를 정하는 핵심 조건.
+ *
+ * 맵기는 사용자가 요청한 대로 오직 감점만 한다. 제철 월 역시 대체 추천
+ * 판정에는 쓰지 않고, 점수순을 움직이는 보너스로만 사용한다. 그래서 3월에
+ * 완전 일치 육류가 없다고 해서 취향 점수 100점짜리 메뉴가 빨간 대체 추천으로
+ * 보이는 모순이 생기지 않는다.
  */
-export function satisfiesCategoryTasteExactly(pref: Preference, food: Food): boolean {
-  // 맵기는 여기서 필터링하지 않는다. 완전히 달라도 대체 추천이 아니라
-  // 단순 감점으로만 처리한다.
-  if (pref.soup !== 1 && food.hasSoup !== (pref.soup === 2)) return false;
-  if (food.isRaw !== (pref.raw === "O")) return false;
+export function categoryMismatchReasons(pref: Preference, food: Food): string[] {
+  const reasons: string[] = [];
+  if (food.isRaw !== (pref.raw === "O")) reasons.push("날것/익힘 조건 불일치");
   if (
     pref.ingredient !== "상관없음" &&
     !food.mainIngredients.includes(pref.ingredient)
   ) {
-    return false;
+    reasons.push("주재료 조건 불일치");
   }
-  return true;
+  if (pref.soup !== 1 && food.hasSoup !== (pref.soup === 2)) {
+    reasons.push("국물 조건 불일치");
+  }
+  return reasons;
 }
 
-function categoryConditionScore(pref: Preference, food: Food): number {
-  // 대체 추천 우선순위 역시 날것/익힘 > 주재료 > 국물 순이다.
-  // 맵기는 explainMatch의 10점 감점으로만 반영한다.
-  let score = 0;
-  if (food.isRaw === (pref.raw === "O")) score += 40;
-  if (
-    pref.ingredient === "상관없음" ||
-    food.mainIngredients.includes(pref.ingredient)
-  ) {
-    score += 30;
-  }
-  if (pref.soup === 1 || food.hasSoup === (pref.soup === 2)) score += 20;
-  return score;
+/** 맵기는 정확/대체를 가르는 조건이 아니라 점수 감점만 한다. */
+export function satisfiesCategoryTasteExactly(pref: Preference, food: Food): boolean {
+  return categoryMismatchReasons(pref, food).length === 0;
 }
 
 function monthGap(months: number[], target: number): number {
-  if (months.length === 0) return 12;
+  if (months.length === 0) return 6;
   return Math.min(
     ...months.map((month) => {
       const direct = Math.abs(month - target);
@@ -639,58 +647,186 @@ function monthGap(months: number[], target: number): number {
 }
 
 /**
- * 카테고리 선택 전용 추천.
+ * 제철은 취향 4축보다 아래 단계의 보너스로 둔다.
+ * - 해당 월: +12
+ * - 앞뒤 1개월: +6
+ * - 앞뒤 2개월: +3
+ * - 그 외: +0
  *
- * 1) 선택 월 + 날것/익힘·주재료·국물 핵심 조건을 만족하는 음식이 있으면
- *    그 안에서 맵기 차이는 감점만 하여 순위를 정한다.
- * 2) 핵심 조건 완전 일치가 0개일 때만 대체 추천한다. 대체 추천도
- *    날것/익힘 → 주재료 → 국물 → 맵기 감점 순으로 정렬한다.
- * 3) 최종 상위 결과는 동일 핵심 식재료의 두 번째 메뉴부터 100점 패널티를
- *    받아, 가능한 한 서로 다른 재료로 구성한다.
+ * 최대 12점이라 날것(40)·주재료(30)·국물(20)을 뒤집지는 못하지만, 같은 취향
+ * 점수라면 선택 월에 맞는 음식이 확실히 앞선다. 기존에는 제철이 후보 필터와
+ * 동점자 정렬에만 들어가 5~8월 결과가 지나치게 비슷해지는 문제가 있었다.
+ */
+export function seasonPreferenceBonus(food: Pick<Food, "months">, month: number): number {
+  const gap = monthGap(food.months, month);
+  if (gap === 0) return 12;
+  if (gap === 1) return 6;
+  if (gap === 2) return 3;
+  return 0;
+}
+
+/** 같은 화면에서 두 번째 동일 식재료부터 주는 완만한 다양성 감점. */
+export const CATEGORY_DUPLICATE_PENALTY = 15;
+
+function rankedCategoryCandidates(
+  foods: Food[],
+  pref: Preference,
+  seed: string,
+): ScoredFood[] {
+  const raw = foods.map<ScoredFood>((food) => {
+    const mismatches = categoryMismatchReasons(pref, food);
+    const match = explainMatch(pref, food).score;
+    const seasonBonus = seasonPreferenceBonus(food, pref.month);
+    return {
+      food,
+      match,
+      inSeason: food.months.includes(pref.month),
+      mismatches,
+      demoted: false,
+      seasonBonus,
+      rankingScore: match + seasonBonus,
+      substitute: mismatches.length > 0,
+      substitutionReasons: mismatches,
+      diversityPenalty: 0,
+    };
+  });
+
+  raw.sort((a, b) => {
+    const scoreDiff = (b.rankingScore ?? b.match) - (a.rankingScore ?? a.match);
+    if (scoreDiff !== 0) return scoreDiff;
+    if (b.match !== a.match) return b.match - a.match;
+    if (a.inSeason !== b.inSeason) return a.inSeason ? -1 : 1;
+    const gapDiff = monthGap(a.food.months, pref.month) - monthGap(b.food.months, pref.month);
+    if (gapDiff !== 0) return gapDiff;
+    return tieHash(a.food.id, seed) - tieHash(b.food.id, seed);
+  });
+
+  // 같은 메뉴명이 서로 다른 제철 식재료 행으로 중복된 13개 메뉴가 있다.
+  // 한 추천 화면에서 동일 메뉴가 두 번 나오지 않도록 가장 높은 점수 행만 남긴다.
+  const seenNames = new Set<string>();
+  return raw.filter((item) => {
+    const key = item.food.displayName || item.food.name;
+    if (seenNames.has(key)) return false;
+    seenNames.add(key);
+    return true;
+  });
+}
+
+function ingredientKey(item: ScoredFood): string {
+  return item.food.ingredient || item.food.name;
+}
+
+/**
+ * 한 페이지를 점수순으로 고르되 첫 화면과 새로고침의 다양성 규칙을 다르게 한다.
+ *
+ * 첫 화면(round=0): 같은 핵심 식재료는 가능한 한 1개만 보여 준다.
+ * 다음 화면(round>=1): 이전에 안 보인 메뉴를 우선하고, 같은 식재료를 화면당
+ * 최대 2개까지 허용한다. 이때 두 번째 동일 재료에는 -15점만 적용해 전복회처럼
+ * 첫 화면에서 숨겨진 고득점 변형 메뉴도 1~2개 정도 다시 등장할 수 있다.
+ */
+function selectCategoryPage(
+  ranked: ScoredFood[],
+  limit: number,
+  round: number,
+  seenFoodIds: string[],
+): ScoredFood[] {
+  const seen = new Set(seenFoodIds);
+  const unseen = ranked.filter((item) => !seen.has(item.food.id));
+  const source = unseen.length >= limit ? unseen : [
+    ...unseen,
+    ...ranked.filter((item) => seen.has(item.food.id)),
+  ];
+
+  const normal = source.filter((item) => !item.substitute);
+  const alternatives = source.filter((item) => item.substitute);
+  const picked: ScoredFood[] = [];
+  const ingredientCounts = new Map<string, number>();
+  const maxPerIngredient = round === 0 ? 1 : 2;
+
+  const take = (pool: ScoredFood[], enforceCap: boolean) => {
+    const pending = [...pool];
+    while (picked.length < limit && pending.length > 0) {
+      let bestIndex = -1;
+      let bestAdjusted = -Infinity;
+      let bestPenalty = 0;
+
+      for (let index = 0; index < pending.length; index += 1) {
+        const item = pending[index];
+        if (picked.some((taken) => taken.food.id === item.food.id)) continue;
+        const key = ingredientKey(item);
+        const duplicateCount = ingredientCounts.get(key) ?? 0;
+        if (enforceCap && duplicateCount >= maxPerIngredient) continue;
+        const penalty = duplicateCount * CATEGORY_DUPLICATE_PENALTY;
+        const adjusted = (item.rankingScore ?? item.match) - penalty;
+        if (adjusted > bestAdjusted) {
+          bestAdjusted = adjusted;
+          bestIndex = index;
+          bestPenalty = penalty;
+        }
+      }
+
+      if (bestIndex < 0) break;
+      const [chosen] = pending.splice(bestIndex, 1);
+      const key = ingredientKey(chosen);
+      ingredientCounts.set(key, (ingredientCounts.get(key) ?? 0) + 1);
+      picked.push({
+        ...chosen,
+        demoted: bestPenalty > 0,
+        diversityPenalty: bestPenalty,
+        rankingScore: (chosen.rankingScore ?? chosen.match) - bestPenalty,
+      });
+    }
+  };
+
+  // 정상 추천을 먼저 채운 뒤 부족한 자리만 대체 추천으로 채운다.
+  take(normal, true);
+  if (picked.length < limit) take(alternatives, true);
+
+  // ‘항상 5개’ 규칙. 첫 화면에 서로 다른 재료가 5개보다 적은 극단적 조건이면
+  // 고득점 정상 메뉴 중 중복 재료를 허용하고, 그래도 모자라면 대체 메뉴를 넣는다.
+  if (picked.length < limit) take(normal, false);
+  if (picked.length < limit) take(alternatives, false);
+
+  // 다양성 때문에 선택 순서가 달라져도 화면 표시는 최종 추천 점수 내림차순이다.
+  return picked
+    .slice(0, limit)
+    .sort((a, b) => {
+      const diff = (b.rankingScore ?? b.match) - (a.rankingScore ?? a.match);
+      if (diff !== 0) return diff;
+      return b.match - a.match;
+    });
+}
+
+/**
+ * 카테고리 입력 전용 추천.
+ *
+ * - 결과는 항상 5개를 목표로 한다.
+ * - 정상 추천은 날것/익힘·주재료·국물 조건을 만족한다.
+ * - 맵기와 제철은 대체 추천 판정이 아니라 점수/보너스에만 영향을 준다.
+ * - 정상 추천이 5개보다 적으면 가장 점수가 가까운 메뉴를 대체 추천으로 섞는다.
+ * - 첫 화면은 동일 식재료 1개, ‘다른 추천 보기’는 최대 2개까지 허용한다.
  */
 export function recommendByExactCategory(
   foods: Food[],
   pref: Preference,
   limit = 5,
   seed: string = randomSeed(),
+  round = 0,
+  seenFoodIds: string[] = [],
 ): CategoryRecommendationResult {
-  const exactTaste = foods.filter((food) => satisfiesCategoryTasteExactly(pref, food));
-  const exactSeason = exactTaste.filter((food) => food.months.includes(pref.month));
-
-  if (exactSeason.length > 0) {
-    const exact = rankCandidates(exactSeason, pref, seed).slice(0, limit);
-    return {
-      exact,
-      alternatives: [],
-      exactTotal: exactSeason.length,
-      exactTasteAnySeason: exactTaste.length,
-    };
-  }
-
-  const alternatives = foods
-    .map<ScoredFood>((food) => ({
-      food,
-      match: explainMatch(pref, food).score,
-      inSeason: food.months.includes(pref.month),
-      mismatches: describeMismatches(pref, food),
-      demoted: false,
-    }))
-    .sort((a, b) => {
-      const conditionDiff =
-        categoryConditionScore(pref, b.food) - categoryConditionScore(pref, a.food);
-      if (conditionDiff !== 0) return conditionDiff;
-      if (a.inSeason !== b.inSeason) return a.inSeason ? -1 : 1;
-      if (b.match !== a.match) return b.match - a.match;
-      const gapDiff = monthGap(a.food.months, pref.month) - monthGap(b.food.months, pref.month);
-      if (gapDiff !== 0) return gapDiff;
-      return tieHash(a.food.id, seed) - tieHash(b.food.id, seed);
-    });
+  const ranked = rankedCategoryCandidates(foods, pref, seed);
+  const results = selectCategoryPage(ranked, limit, round, seenFoodIds);
+  const exact = results.filter((item) => !item.substitute);
+  const alternatives = results.filter((item) => item.substitute);
+  const exactTotal = ranked.filter((item) => !item.substitute).length;
 
   return {
-    exact: [],
-    alternatives: diversify(alternatives, limit),
-    exactTotal: 0,
-    exactTasteAnySeason: exactTaste.length,
+    results,
+    exact,
+    alternatives,
+    exactTotal,
+    exactTasteAnySeason: exactTotal,
+    round,
   };
 }
 

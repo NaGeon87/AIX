@@ -5,14 +5,11 @@ import { getKstMonth } from "@/lib/kst";
 import {
   AXIS_WEIGHTS,
   CREDIBILITY_FLOOR,
-  DIVERSITY_MAX_DROP,
+  CATEGORY_DUPLICATE_PENALTY,
   MAX_PER_INGREDIENT,
-  MAX_PER_METHOD,
   RAW_PARTIAL,
-  STRICT_POOL_MIN,
   explainMatch,
   rankCandidates,
-  seasonalPoolInfo,
   spicyLabel,
   type Preference,
 } from "@/lib/recommend";
@@ -40,7 +37,6 @@ const AXIS_COLOR = {
 
 export default function HowPage() {
   const month = getKstMonth();
-  const pool = seasonalPoolInfo(foods, month);
   const ranked = rankCandidates(foods, { ...SAMPLE_PREF, month });
 
   // 네 지표가 다 맞아떨어진 1위는 예시로 시시하다. 어딘가 어긋난 음식이라야
@@ -109,30 +105,24 @@ export default function HowPage() {
       </section>
 
       {/* 1단계 -------------------------------------------------------------- */}
-      <Step index={1} title="제철 후보 고르기">
+      <Step index={1} title="제철은 보너스로 반영">
         <p>
-          모아 둔 음식 {meta.foodCount}건 가운데 <b>{month}월 제철로 잡힌 것은 {pool.strict}건</b>
-          입니다(이름이 같은 메뉴를 하나로 합치면 결과 화면의 후보 수는 이보다 조금
-          적습니다). 이 목록이 {STRICT_POOL_MIN}건에 못 미치는 달에는 앞뒤 한 달까지 넓혀
-          잡고, 그렇게 들어온 음식은 카드에 <b>‘이번 달 제철은 아님’</b>이라고 밝힙니다.
+          월 선택은 음식을 강제로 탈락시키는 필터가 아닙니다. 선택한 달이 제철이면
+          <b> +12점</b>, 앞뒤 1개월이면 <b>+6점</b>, 앞뒤 2개월이면 <b>+3점</b>,
+          그보다 멀면 0점을 더합니다.
         </p>
         <p>
-          제철이 아닌 음식을 점수만 높다고 끼워 넣지는 않습니다. 이 서비스가 답하려는 질문이
-          &ldquo;지금 이 지역에서 무엇이 좋은가&rdquo;이기 때문입니다.
-          {pool.widened && (
-            <>
-              {" "}
-              <b>{month}월은 목록이 짧아 실제로 앞뒤 달까지 넓혀 잡고 있습니다.</b>
-            </>
-          )}
+          취향 네 축은 최대 100점이고 제철은 최대 12점이라, <b>취향이 제철보다 우선</b>합니다.
+          같은 취향 점수끼리는 선택한 달에 맞는 음식이 확실히 앞으로 옵니다. 제철이 아니라는
+          이유만으로 대체 추천이 되지는 않습니다.
         </p>
       </Step>
 
       {/* 2단계 -------------------------------------------------------------- */}
       <Step index={2} title="취향 네 가지를 100점으로 나눠 채점">
         <p>
-          지표마다 배점이 다릅니다. 맵기가 어긋나면 아예 못 먹는 사람이 있지만, 국물 여부는
-          그 정도는 아니라고 보았습니다.
+          지표마다 배점이 다릅니다. 우선순위는 <b>날것/익힘 → 주재료 → 국물 → 맵기</b>입니다.
+          맵기는 완전히 달라도 대체 추천으로 분류하지 않고 점수만 깎습니다.
         </p>
 
         <div className="mt-3 overflow-hidden rounded-2xl border border-line bg-surface">
@@ -146,10 +136,18 @@ export default function HowPage() {
             </thead>
             <tbody className="divide-y divide-line">
               <Row
-                color={AXIS_COLOR.spicy}
-                name="맵기"
-                weight={AXIS_WEIGHTS.spicy}
-                rule={`0~3단계 중 한 단계 어긋날 때마다 배점의 ⅓씩 깎습니다. ${SPICY_STEPS}`}
+                color={AXIS_COLOR.raw}
+                name="날것"
+                weight={AXIS_WEIGHTS.raw}
+                rule={`맞으면 전부. 날것을 원했는데 익힌 메뉴면 ${Math.round(
+                  RAW_PARTIAL * 100,
+                )}%인 ${AXIS_WEIGHTS.raw * RAW_PARTIAL}점을 남깁니다. 반대로 익힌 것을 원했는데 날것이면 0점입니다.`}
+              />
+              <Row
+                color={AXIS_COLOR.ingredient}
+                name="주재료"
+                weight={AXIS_WEIGHTS.ingredient}
+                rule="고른 계열이 대표 재료에 들어 있으면 전부, 아니면 0점. ‘상관없음’이면 채점에서 뺍니다."
               />
               <Row
                 color={AXIS_COLOR.soup}
@@ -158,18 +156,10 @@ export default function HowPage() {
                 rule="맞으면 전부, 반대면 0점. ‘상관없음’을 고르면 채점에서 뺍니다."
               />
               <Row
-                color={AXIS_COLOR.raw}
-                name="날것"
-                weight={AXIS_WEIGHTS.raw}
-                rule={`맞으면 전부. 날것을 원했는데 익힌 메뉴면 ${Math.round(
-                  RAW_PARTIAL * 100,
-                )}%인 ${AXIS_WEIGHTS.raw * RAW_PARTIAL}점을 남깁니다 — 날것 메뉴 자체가 드물어서입니다. 반대로 익힌 것을 원했는데 날것이면 0점입니다.`}
-              />
-              <Row
-                color={AXIS_COLOR.ingredient}
-                name="주재료"
-                weight={AXIS_WEIGHTS.ingredient}
-                rule="고른 계열이 대표 재료에 들어 있으면 전부, 아니면 0점. ‘상관없음’이면 채점에서 뺍니다."
+                color={AXIS_COLOR.spicy}
+                name="맵기"
+                weight={AXIS_WEIGHTS.spicy}
+                rule={`0~3단계 중 한 단계 어긋날 때마다 배점의 ⅓씩 깎습니다. ${SPICY_STEPS}`}
               />
             </tbody>
           </table>
@@ -271,45 +261,30 @@ export default function HowPage() {
       </Step>
 
       {/* 4단계 -------------------------------------------------------------- */}
-      <Step index={4} title="한 재료가 목록을 독차지하지 않게">
+      <Step index={4} title="첫 화면은 식재료를 겹치지 않게">
         <p>
-          점수순으로만 세우면 &ldquo;전복문어탕 · 전복연포탕 · 전복해신탕&rdquo;처럼 같은
-          재료의 변주가 네 칸을 통째로 차지합니다. 점수는 정직하지만 오늘 뭘 먹을지 고르는 데는
-          쓸모가 없습니다.
+          점수순 그대로 자르면 전복찜·전복회·전복구이처럼 한 재료가 결과를 차지할 수 있습니다.
+          첫 추천 5개에서는 <b>같은 핵심 식재료를 가능한 한 1개만</b> 보여 주고, 서로 다른
+          식재료 중 점수가 높은 순으로 채웁니다. 같은 메뉴명이 제철 재료만 달리해 중복된 행도
+          가장 높은 점수 하나만 남깁니다.
         </p>
         <p>
-          그래서 <b>한 재료당 {MAX_PER_INGREDIENT}가지</b>까지만 앞에 두고, 나머지는 뒤로
-          밉니다. <b>조리법도 {MAX_PER_METHOD}가지</b>까지입니다 — 재료가 달라도 넷 다
-          조림이면 결국 같은 상이니까요. 이 규칙에 걸려 밀린 음식은 설명 패널에서 그 사실을
-          밝힙니다. 이름이 같은 메뉴가 재료만 다르게 두 번 잡힌 경우도 먼저 하나로 합칩니다.
-        </p>
-        <p>
-          재료와 이름이 겹치는 것은 <b>점수와 상관없이 막습니다</b> — 같은 음식이 목록에 두 번
-          있는 것은 어떤 점수로도 정당화되지 않으니까요. 반면 조리법은 값이 비싸면 포기합니다.
-          겹치지 않는 후보가 점수로 <b>{DIVERSITY_MAX_DROP}점 넘게</b> 뒤처지면 조리법 상한을
-          풀고 점수가 높은 쪽을 택합니다.
+          <b>‘다른 추천 보기’</b>를 누르면 앞에서 보지 못한 메뉴를 우선하며 같은 식재료를
+          화면당 최대 2개까지 허용합니다. 두 번째 동일 식재료에는 <b>-${CATEGORY_DUPLICATE_PENALTY}점</b>
+          다양성 보정을 적용해, 숨겨졌던 고득점 변형 메뉴도 보되 다시 한 재료가 독점하지 않게 합니다.
         </p>
       </Step>
 
       {/* 5단계 -------------------------------------------------------------- */}
-      <Step index={5} title="동점이면 무엇으로 가르나">
+      <Step index={5} title="최종 추천 점수로 순서 결정">
         <p>
-          점수가 같으면 <b>이번 달 제철인 쪽</b>을 앞에 둡니다. 그래도 같으면{" "}
-          <b>매번 새로 섞습니다.</b> 제철 후보는 같은 점수에 수십 가지가 몰리는데, 여기서
-          &lsquo;파는 집이 많은 순&rsquo; 같은 고정된 기준으로 줄을 세우면 늘 같은 음식이
-          이깁니다. 실제로 그렇게 두었을 때는 음식 {meta.foodCount}가지 중 일부만 화면에
-          나왔습니다.
+          화면의 순서는 <b>취향 점수 + 제철 보너스 - 다양성 보정</b>으로 계산한 최종 추천 점수
+          내림차순입니다. 맵기 차이는 취향 점수 안에서만 감점되고, 날것/익힘·주재료·국물 중
+          하나라도 어긋난 메뉴만 개별적으로 <b>대체 추천</b>이 됩니다.
         </p>
         <p>
-          그래서 <b>같은 취향을 다시 골라도 결과가 달라집니다.</b> 목록 위의{" "}
-          <b>‘다른 추천 보기’</b>를 누르면 취향은 그대로 둔 채 다른 네 가지를 받습니다. 점수와
-          제철 판정이 바뀌는 것이 아니라, <b>동점자 중 누구를 보여 줄지만</b> 다시 정합니다.
-        </p>
-        <p>
-          그래서 주소만 복사해 보내면 상대는 다른 네 가지를 봅니다. 내가 본 그대로를
-          보내려면 <b>‘이 추천 공유’</b>를 누르세요 — 그때 쓴 섞기 값까지 주소에 실어
-          주므로, 받은 사람도 <b>같은 네 가지</b>를 봅니다. 그 링크에서 ‘다른 추천 보기’를
-          누르면 다시 새로 섞입니다.
+          정상 추천만으로 5개를 채우지 못하면 나머지 자리에 점수가 가장 가까운 대체 메뉴를 넣습니다.
+          대체 메뉴는 빨간 테두리와 불일치 사유를 표시합니다. 결과 수는 항상 5개를 목표로 합니다.
         </p>
       </Step>
 

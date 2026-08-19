@@ -5,7 +5,6 @@ import { getKstMonth } from "@/lib/kst";
 import { parseTasteText } from "@/lib/parse-taste";
 import {
   DEFAULT_PREFERENCE,
-  INGREDIENT_DUPLICATE_PENALTY,
   recommendFoods,
   type Preference,
 } from "@/lib/recommend";
@@ -128,43 +127,45 @@ function localReason(food: Food, parsed: ReturnType<typeof parseTasteText>, loca
   return bits.length ? `${bits.join(" · ")} 조건에 잘 맞습니다.` : "현재 제철과 음식 데이터에서 취향에 가까운 메뉴입니다.";
 }
 
-function diversifyFoodIds(primaryIds: string[], localFoods: Food[], limit = 5): string[] {
-  // LLM 순위를 존중하되 같은 실제 식재료(전복·홍어 등)의 두 번째 메뉴부터
-  // 100점 패널티를 준다. 필요하면 로컬 상위 후보로 빈자리를 보충한다.
-  const baseOrder = [...primaryIds, ...localFoods.map((food) => food.id)];
-  const uniqueIds = Array.from(new Set(baseOrder));
+function diversifyFoodIds(
+  primaryIds: string[],
+  localFoods: Food[],
+  limit = 5,
+  allowTwoPerIngredient = false,
+): string[] {
+  // LLM 순위를 최대한 존중하되 첫 추천은 같은 실제 식재료를 1개만 노출한다.
+  // ‘다른 추천 보기’에서는 이미 본 foodId가 제외되어 들어오므로 화면당 2개까지
+  // 허용해, 첫 화면에서 숨긴 전복회/전복찜 같은 고득점 변형도 다시 볼 수 있다.
+  const baseOrder = Array.from(new Set([...primaryIds, ...localFoods.map((food) => food.id)]));
   const foodById = new Map(localFoods.map((food) => [food.id, food]));
-  const pending = uniqueIds
-    .map((id, index) => ({ id, food: foodById.get(id), base: Math.max(0, 100 - index * 2) }))
-    .filter((item): item is { id: string; food: Food; base: number } => Boolean(item.food));
-
+  const maxPerIngredient = allowTwoPerIngredient ? 2 : 1;
   const picked: string[] = [];
   const ingredientCount = new Map<string, number>();
-  while (picked.length < limit && pending.length > 0) {
-    let bestIndex = 0;
-    let bestScore = -Infinity;
-    for (let index = 0; index < pending.length; index += 1) {
-      const item = pending[index];
-      const ingredient = item.food.ingredient || item.food.name;
-      const duplicateCount = ingredientCount.get(ingredient) ?? 0;
-      const adjusted = item.base - duplicateCount * INGREDIENT_DUPLICATE_PENALTY;
-      if (adjusted > bestScore) {
-        bestScore = adjusted;
-        bestIndex = index;
-      }
+
+  const take = (enforceCap: boolean) => {
+    for (const id of baseOrder) {
+      if (picked.length >= limit) break;
+      if (picked.includes(id)) continue;
+      const food = foodById.get(id);
+      if (!food) continue;
+      const ingredient = food.ingredient || food.name;
+      const count = ingredientCount.get(ingredient) ?? 0;
+      if (enforceCap && count >= maxPerIngredient) continue;
+      ingredientCount.set(ingredient, count + 1);
+      picked.push(id);
     }
-    const [chosen] = pending.splice(bestIndex, 1);
-    const ingredient = chosen.food.ingredient || chosen.food.name;
-    ingredientCount.set(ingredient, (ingredientCount.get(ingredient) ?? 0) + 1);
-    picked.push(chosen.id);
-  }
-  return picked;
+  };
+
+  take(true);
+  // 후보 식재료 종류 자체가 5개보다 적은 경우에만 중복을 허용해 항상 5개를 채운다.
+  if (picked.length < limit) take(false);
+  return picked.slice(0, limit);
 }
 
 function fallbackRecommend(message: string, excludeFoodIds: string[] = [], location: LocationIntent | null): LlmResult {
   const parsed = parseTasteText(message);
   const localFoods = buildLocalCandidates(message, excludeFoodIds, location);
-  const diversifiedIds = diversifyFoodIds(localFoods.map((food) => food.id), localFoods, 5);
+  const diversifiedIds = diversifyFoodIds(localFoods.map((food) => food.id), localFoods, 5, excludeFoodIds.length > 0);
   const byId = new Map(localFoods.map((food) => [food.id, food]));
   const candidates = diversifiedIds.map((id) => byId.get(id)).filter((food): food is Food => Boolean(food));
   const understood = parsed.hits.map((hit) => `${hit.label}: ${hit.reading}`);
@@ -253,7 +254,7 @@ export async function POST(request: Request) {
 
     const excluded = new Set(excludeFoodIds);
     const llmIds = parsed.foodIds.filter((id) => validIds.has(id) && !excluded.has(id));
-    const foodIds = diversifyFoodIds(llmIds, localFoods, 5);
+    const foodIds = diversifyFoodIds(llmIds, localFoods, 5, excludeFoodIds.length > 0);
     if (foodIds.length === 0) return NextResponse.json({ ...fallback, mode: "local", location });
     const parsedTaste = parseTasteText(message);
     const localById = new Map(localFoods.map((food) => [food.id, food]));
