@@ -649,8 +649,7 @@ function monthGap(months: number[], target: number): number {
 /**
  * 제철은 취향 4축보다 아래 단계의 보너스로 둔다.
  * - 해당 월: +12
- * - 앞뒤 1개월: +6
- * - 앞뒤 2개월: +3
+ * - 앞뒤 1개월: +3
  * - 그 외: +0
  *
  * 최대 12점이라 날것(40)·주재료(30)·국물(20)을 뒤집지는 못하지만, 같은 취향
@@ -660,8 +659,7 @@ function monthGap(months: number[], target: number): number {
 export function seasonPreferenceBonus(food: Pick<Food, "months">, month: number): number {
   const gap = monthGap(food.months, month);
   if (gap === 0) return 12;
-  if (gap === 1) return 6;
-  if (gap === 2) return 3;
+  if (gap === 1) return 3;
   return 0;
 }
 
