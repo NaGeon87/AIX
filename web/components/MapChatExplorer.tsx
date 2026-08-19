@@ -663,7 +663,7 @@ export function MapChatExplorer({
                                     const finalScore = item?.rankingScore ?? explanation.score;
                                     return (
                                       <>
-                                        <p className="mt-1">제철 보너스: +{seasonBonus}점 · 선택 월 정확 일치 +12 / ±1개월 +6 / ±2개월 +3</p>
+                                        <p className="mt-1">제철 보너스: +{seasonBonus}점 · 선택 월 정확 일치 +12 / ±1개월 +3 / 그 외 0</p>
                                         <p className={diversityPenalty > 0 ? "mt-1 font-bold text-brand" : "mt-1"}>
                                           식재료 다양성 보정: {diversityPenalty > 0 ? `-${diversityPenalty}점` : "0점"}
                                         </p>
