@@ -43,7 +43,7 @@ function lexicalScore(food: Food, message: string) {
   return score;
 }
 
-function buildLocalCandidates(message: string) {
+function buildLocalCandidates(message: string, excludeFoodIds: string[] = []) {
   const parsed = parseTasteText(message);
   const pref: Preference = {
     ...DEFAULT_PREFERENCE,
@@ -54,7 +54,10 @@ function buildLocalCandidates(message: string) {
   const tasteRanked = recommendFoods(foods, pref, 30);
   const tasteMap = new Map(tasteRanked.map((item, index) => [item.food.id, 30 - index]));
 
+  const excluded = new Set(excludeFoodIds);
+
   return [...foods]
+    .filter((food) => !excluded.has(food.id))
     .map((food) => ({
       food,
       score: (tasteMap.get(food.id) ?? 0) + lexicalScore(food, message),
@@ -65,7 +68,7 @@ function buildLocalCandidates(message: string) {
     .map((item) => item.food);
 }
 
-function fallbackRecommend(message: string): LlmResult {
+function fallbackRecommend(message: string, excludeFoodIds: string[] = []): LlmResult {
   const parsed = parseTasteText(message);
   const pref: Preference = {
     ...DEFAULT_PREFERENCE,
@@ -73,13 +76,18 @@ function fallbackRecommend(message: string): LlmResult {
     ...parsed.pref,
   };
 
+  const excluded = new Set(excludeFoodIds);
+
   const exact = foods
+    .filter((food) => !excluded.has(food.id))
     .map((food) => ({ food, score: lexicalScore(food, message) }))
     .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score)
     .map((item) => item.food);
 
-  const taste = recommendFoods(foods, pref, 12).map((item) => item.food);
+  const taste = recommendFoods(foods, pref, 30)
+    .map((item) => item.food)
+    .filter((food) => !excluded.has(food.id));
   const picked: Food[] = [];
   const seen = new Set<string>();
 
@@ -182,12 +190,19 @@ async function callAnthropic(
 }
 
 export async function POST(request: Request) {
-  const body = (await request.json()) as { message?: string; history?: ChatTurn[] };
+  const body = (await request.json()) as {
+    message?: string;
+    history?: ChatTurn[];
+    excludeFoodIds?: string[];
+  };
   const message = body.message?.trim();
   if (!message) return NextResponse.json({ error: "message is required" }, { status: 400 });
 
-  const fallback = fallbackRecommend(message);
-  const candidates = buildLocalCandidates(message).map(compactFood);
+  const excludeFoodIds = Array.isArray(body.excludeFoodIds)
+    ? body.excludeFoodIds.filter((id): id is string => typeof id === "string").slice(0, 20)
+    : [];
+  const fallback = fallbackRecommend(message, excludeFoodIds);
+  const candidates = buildLocalCandidates(message, excludeFoodIds).map(compactFood);
   const validIds = new Set(foods.map((food) => food.id));
   const history = (body.history ?? []).filter(
     (turn) =>
@@ -224,7 +239,10 @@ export async function POST(request: Request) {
 
     if (!parsed) return NextResponse.json({ ...fallback, mode: "local" });
 
-    const foodIds = parsed.foodIds.filter((id) => validIds.has(id)).slice(0, 5);
+    const excluded = new Set(excludeFoodIds);
+    const foodIds = parsed.foodIds
+      .filter((id) => validIds.has(id) && !excluded.has(id))
+      .slice(0, 5);
     if (foodIds.length === 0) return NextResponse.json({ ...fallback, mode: "local" });
 
     return NextResponse.json({

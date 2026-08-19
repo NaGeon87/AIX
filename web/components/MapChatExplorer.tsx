@@ -12,19 +12,6 @@ function spicyText(level: number) {
   return ["안 매움", "약간 매움", "매움", "아주 매움"][level] ?? `${level}`;
 }
 
-function foodEmoji(food: Food) {
-  const text = `${food.name} ${food.displayName} ${food.ingredient}`;
-  if (/전복|조개|꼬막|바지락|키조개/.test(text)) return "🐚";
-  if (/낙지|문어|주꾸미/.test(text)) return "🐙";
-  if (/게장|꽃게|게/.test(text)) return "🦀";
-  if (/닭|오리/.test(text)) return "🍗";
-  if (/한우|소고기|불고기|떡갈비|돼지|곱창/.test(text)) return "🥩";
-  if (/생선|갈치|장어|굴비|홍어|민어|삼치|회/.test(text)) return "🐟";
-  if (food.mainIngredients.includes("채소")) return "🥬";
-  if (food.mainIngredients.includes("육류")) return "🥩";
-  if (food.mainIngredients.includes("해산물")) return "🐟";
-  return "🍽️";
-}
 
 export function MapChatExplorer({ streets, foods }: { streets: Street[]; foods: Food[] }) {
   const [messages, setMessages] = useState<Message[]>([
@@ -38,6 +25,7 @@ export function MapChatExplorer({ streets, foods }: { streets: Street[]; foods: 
   const [recommendedFoodIds, setRecommendedFoodIds] = useState<string[]>([]);
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const [pending, setPending] = useState(false);
+  const [lastTaste, setLastTaste] = useState("");
 
   const selectedStreet = useMemo(
     () => streets.find((street) => street.id === selectedId),
@@ -103,8 +91,6 @@ export function MapChatExplorer({ streets, foods }: { streets: Street[]; foods: 
           label: `${food.displayName || food.name} · ${restaurant.name}`,
           kind: "food",
           highlight: id === selectedId,
-          iconFallback: foodEmoji(food),
-          iconLabel: `${food.displayName || food.name} 먹을 수 있는 곳`,
         });
         added += 1;
         if (added >= 2) break;
@@ -112,26 +98,27 @@ export function MapChatExplorer({ streets, foods }: { streets: Street[]; foods: 
     }
 
     return {
-      markers: [...streetMarkers, ...foodMarkers],
+      markers: foodMarkers.length > 0 ? foodMarkers : streetMarkers,
       firstFoodMarkerByFoodId: firstByFood,
       foodMarkerCount: foodMarkers.length,
     };
   }, [streets, recommendedFoods, selectedId]);
 
-  const submit = async (preset?: string) => {
+  const submit = async (preset?: string, excludeFoodIds: string[] = []) => {
     const text = (preset ?? input).trim();
     if (!text || pending) return;
 
     const previous = messages;
     setMessages([...previous, { role: "user", content: text }]);
     setInput("");
+    setLastTaste(text);
     setPending(true);
 
     try {
       const response = await fetch("/api/chat-recommend", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message: text, history: previous }),
+        body: JSON.stringify({ message: text, history: previous, excludeFoodIds }),
       });
       const data = (await response.json()) as { reply?: string; foodIds?: string[] };
       const ids = data.foodIds ?? [];
@@ -176,6 +163,11 @@ export function MapChatExplorer({ streets, foods }: { streets: Street[]; foods: 
     }
   };
 
+  const refreshRecommendations = () => {
+    if (!lastTaste || pending) return;
+    submit(lastTaste, recommendedFoodIds);
+  };
+
   return (
     <main className="min-h-dvh bg-canvas lg:h-dvh lg:overflow-hidden">
       <div className="grid min-h-dvh lg:h-dvh lg:grid-cols-[minmax(0,1.35fr)_minmax(400px,0.65fr)]">
@@ -189,8 +181,11 @@ export function MapChatExplorer({ streets, foods }: { streets: Street[]; foods: 
               전남 음식거리를 보고, AI 추천 음식 위치도 확인하세요
             </p>
             <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-fg-muted">
-              <span className="rounded-full border border-line bg-surface px-2 py-1">📍 음식특화거리</span>
-              <span className="rounded-full border border-line bg-surface px-2 py-1">🍽️ AI 추천 음식 위치</span>
+              {foodMarkerCount === 0 ? (
+                <span className="rounded-full border border-line bg-surface px-2 py-1">음식특화거리</span>
+              ) : (
+                <span className="rounded-full border border-line bg-surface px-2 py-1">● 추천 음식점 위치</span>
+              )}
             </div>
           </div>
 
@@ -198,9 +193,7 @@ export function MapChatExplorer({ streets, foods }: { streets: Street[]; foods: 
             markers={markers}
             height="100%"
             selectedId={selectedId}
-            onSelect={(id) => {
-              if (streets.some((street) => street.id === id)) setSelectedId(id);
-            }}
+            onSelect={(id) => setSelectedId(id)}
             lockToJeonnam
           />
 
@@ -255,10 +248,20 @@ export function MapChatExplorer({ streets, foods }: { streets: Street[]; foods: 
 
         <section className="flex min-h-[48vh] flex-col bg-surface lg:min-h-0">
           <header className="border-b border-line px-5 py-4">
-            <p className="font-display text-[21px] text-fg">취향 음식 추천 AI</p>
-            <p className="mt-0.5 text-[12px] text-fg-muted">
-              자연어 취향을 분석해 296개 음식 데이터에서 메뉴를 추천해요
-            </p>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="font-display text-[21px] text-fg">취향 음식 추천 AI</p>
+                <p className="mt-0.5 text-[12px] text-fg-muted">
+                  자연어 취향을 분석해 296개 음식 데이터에서 메뉴를 추천해요
+                </p>
+              </div>
+              <Link
+                href="/taste/conditions"
+                className="shrink-0 rounded-xl border border-brand px-3 py-2 text-[12px] font-bold text-brand transition hover:bg-accent-soft"
+              >
+                카테고리 선택
+              </Link>
+            </div>
             {foodMarkerCount > 0 && (
               <p className="mt-1 text-[11px] font-medium text-brand">
                 추천 음식을 먹을 수 있는 전남 위치 {foodMarkerCount}곳을 지도에 표시했어요
@@ -295,7 +298,17 @@ export function MapChatExplorer({ streets, foods }: { streets: Street[]; foods: 
 
             {recommendedFoods.length > 0 && (
               <section className="mt-5 border-t border-line pt-4">
-                <p className="mb-2 text-[12px] font-bold text-fg-muted">추천 음식</p>
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <p className="text-[12px] font-bold text-fg-muted">추천 음식</p>
+                  <button
+                    type="button"
+                    onClick={refreshRecommendations}
+                    disabled={pending}
+                    className="rounded-lg border border-brand px-3 py-1.5 text-[11px] font-bold text-brand transition hover:bg-accent-soft disabled:opacity-40"
+                  >
+                    ↻ 다른 추천 보기
+                  </button>
+                </div>
                 <div className="space-y-2.5">
                   {recommendedFoods.map((food, index) => (
                     <article key={food.id} className="rounded-2xl border border-line bg-canvas p-3.5">
@@ -393,7 +406,7 @@ export function MapChatExplorer({ streets, foods }: { streets: Street[]; foods: 
               </button>
             </div>
             <p className="mt-2 text-[10px] leading-relaxed text-fg-muted">
-              지도는 전라남도 권역 안에서만 탐색됩니다. 기본 핀은 음식특화거리 대표 부근이며, AI 추천 후 추가되는 음식 핀은 해당 메뉴를 취급하는 전남 식당 위치입니다.
+              지도는 전라남도 권역 안에서만 탐색됩니다. 처음에는 음식특화거리를 보여주고, 추천 후에는 거리 핀을 숨긴 뒤 해당 메뉴를 취급하는 전남 식당을 점으로 표시합니다.
             </p>
           </div>
         </section>

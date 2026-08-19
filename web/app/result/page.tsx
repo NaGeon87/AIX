@@ -36,6 +36,7 @@ export default async function ResultPage({
   // 매번 다른 상을 받고, 공유받은 링크로 들어오면 보낸 사람과 같은 상을 본다.
   const shared = typeof query.seed === "string" ? query.seed : "";
   const seed = shared || randomSeed();
+  const nextSeed = randomSeed();
   const ranked = rankCandidates(foods, pref, seed);
   const candidates = toNearbyCandidates(ranked, streets, FOOD_LIMIT);
   const shown = ranked.slice(0, FOOD_LIMIT);
@@ -76,12 +77,20 @@ export default async function ResultPage({
           <h1 className="font-display truncate text-[16px]">
             {pref.month}월의 남도, {Math.min(ranked.length, FOOD_LIMIT)}가지
           </h1>
-          <Link
-            href="/how"
-            className="shrink-0 text-[12px] font-bold text-[#b8afa6] transition-colors hover:text-fg-inverse"
-          >
-            추천 방식
-          </Link>
+          <div className="flex shrink-0 items-center gap-2">
+            <Link
+              href={`/result?${preferenceToQuery(pref)}&seed=${nextSeed}`}
+              className="rounded-lg border border-[#6f685f] px-2.5 py-1.5 text-[11px] font-bold text-[#e8dfd4] transition-colors hover:border-fg-inverse hover:text-fg-inverse"
+            >
+              ↻ 다른 추천
+            </Link>
+            <Link
+              href="/how"
+              className="text-[12px] font-bold text-[#b8afa6] transition-colors hover:text-fg-inverse"
+            >
+              추천 방식
+            </Link>
+          </div>
         </div>
         <div className="mt-2 flex flex-wrap gap-1.5">
           <Chip color={SPICY_COLOR} label={`맵기 ${spicyLabel}`} />

@@ -191,9 +191,9 @@ export function RegionMap({
         // onSelect가 있으면 내 위치를 뺀 핀은 누를 수 있다. 무엇으로 이어질지는
         // 부르는 쪽이 정한다(지금은 특화거리 핀 → 거리 상세).
         const clickable = Boolean(onSelectRef.current) && m.kind !== "me";
-        const markerIcon = m.kind === "street" || m.kind === "food"
+        const markerIcon = m.kind === "street"
           ? buildFoodIcon(leaflet, m, { interactive: clickable, selected: Boolean(m.highlight) })
-          : buildDivIcon(leaflet, color, size, { interactive: clickable });
+          : buildDivIcon(leaflet, color, size, { interactive: clickable, ring: Boolean(m.highlight) });
         const marker = leaflet.marker([m.lat, m.lon], {
           icon: markerIcon,
           interactive: true,
@@ -210,7 +210,7 @@ export function RegionMap({
           marker.bindTooltip(m.label, {
             permanent: true,
             direction: "top",
-            offset: [0, m.kind === "street" || m.kind === "food" ? -30 : -size / 2 - 4],
+            offset: [0, m.kind === "street" ? -30 : -size / 2 - 4],
             className: "region-map-label",
           });
         } else {
@@ -221,11 +221,9 @@ export function RegionMap({
       if (lockToJeonnam) {
         // 첫 화면은 추천 결과와 무관하게 항상 전라남도 전체가 먼저 보인다.
         // 추천이 생기면 별도의 selectedId effect가 해당 음식 위치로 flyTo 한다.
-        const jeonnamViewBounds = leaflet.latLngBounds(
-          [34.0, 125.0],
-          [35.5, 127.95],
-        );
-        map.fitBounds(jeonnamViewBounds, { padding: [18, 18] });
+        // 첫 진입에서는 전남 본토와 주요 도서권이 화면을 대부분 채우도록
+        // 기존 fitBounds보다 한 단계 가까운 고정 뷰를 사용한다.
+        map.setView([34.72, 126.72], 9);
       } else if (points.length === 1) {
         map.setView([points[0].lat, points[0].lon], 14);
       } else {
@@ -272,10 +270,19 @@ export function RegionMap({
         if (point.kind !== "street" && point.kind !== "food") continue;
         const mapMarker = markerRefs.current.get(point.id);
         if (!mapMarker) continue;
-        mapMarker.setIcon(buildFoodIcon(leaflet, point, {
-          interactive: Boolean(onSelectRef.current),
-          selected: point.id === selectedId,
-        }));
+        if (point.kind === "street") {
+          mapMarker.setIcon(buildFoodIcon(leaflet, point, {
+            interactive: Boolean(onSelectRef.current),
+            selected: point.id === selectedId,
+          }));
+        } else {
+          mapMarker.setIcon(buildDivIcon(
+            leaflet,
+            MARKER_COLOR.food,
+            point.id === selectedId ? 20 : 12,
+            { interactive: Boolean(onSelectRef.current), ring: point.id === selectedId },
+          ));
+        }
       }
     }
 
