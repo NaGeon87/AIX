@@ -567,3 +567,22 @@ is_local_specialty, menu_expln)
   수집기를 새로 쓸 것. 스펙을 못 구한 채 만들었던 스텁은 삭제했다.
 - `matrlInfo`(농사로 음식 상세의 재료 정보)도 매칭 근거로 쓸지 검토.
   현재는 식재료명·음식명·수산물명만 쓴다.
+
+## 2026-08-19 데이터 업데이트
+
+이번 배포용 묶음에는 다음 최신 사용자 제공 데이터가 반영되어 있습니다.
+
+- `data/raw/광주전남_음식특화거리_위치검증_최종.csv` — 음식특화거리 36건, 위치검증/매칭키워드 포함
+- `data/raw/전남광주통합특별시_지정관광지_20260618.csv` — 지정 관광지 35건
+- `data/raw/전남인기관광명소.xlsx` / `전남인기관광명소.csv` — 인기관광명소 49건
+- `web/public/data/streets.json` — 위 음식특화거리 데이터로 갱신
+- `web/public/data/tourism.json` — 지정관광지 + 인기관광명소 웹용 데이터
+
+재생성 명령:
+
+```bash
+python -m src.streets.build_streets
+python -m src.tourism.build_tourism_data
+```
+
+자연어 입력 화면은 `web/components/TasteTextEntry.tsx`이며 `web/app/taste/page.tsx`에서 사용합니다.

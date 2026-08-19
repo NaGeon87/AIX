@@ -208,7 +208,7 @@ export function RegionMap({
       // isolate: Leaflet이 내부 pane에 박아 두는 z-index(200~700)가
       // 페이지의 다른 요소와 충돌하지 않게 이 지도만의 stacking context로
       // 가둔다. 랜딩 페이지 배경 지도에서 버튼 클릭이 막힌 원인이었다.
-      className="isolate w-full overflow-hidden rounded-2xl border border-line"
+      className="isolate h-full w-full overflow-hidden border border-line lg:rounded-none"
       role="img"
       aria-label={`추천 지점 ${points.length}곳의 위치 지도`}
     />
