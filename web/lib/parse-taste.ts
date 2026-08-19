@@ -34,6 +34,8 @@ export interface ParseResult {
   /** 읽어 낸 값만 담는다. 못 읽은 축은 없다. */
   pref: Partial<Preference>;
   hits: ParsedHit[];
+  /** “해산물 말고”, “고기 빼고”처럼 명시적으로 제외한 주재료 범주. */
+  excludedIngredients: Array<Exclude<IngredientPreference, "상관없음">>;
 }
 
 type Rule<T> = [RegExp, T, string];
@@ -81,10 +83,14 @@ const RAW_RULES: Rule<RawPreference>[] = [
   ],
 ];
 
-/** 부정('고기 말고')을 먼저 잡고, 그다음 긍정을 잡는다. */
+/** “~ 말고/빼고/제외”는 반대 범주를 임의로 추측하지 않고 제외 조건으로 보관한다. */
+const INGREDIENT_EXCLUSION_RULES: Rule<Exclude<IngredientPreference, "상관없음">>[] = [
+  [/해산물\s*(말고|빼|제외)|해물\s*(말고|빼|제외)|생선\s*(말고|빼|제외|싫)|비린\s*거\s*(말고|싫)/, "해산물", "해산물 제외"],
+  [/고기\s*(말고|빼|제외|싫)|육류\s*(말고|빼|제외)|소고기\s*(말고|빼|제외)|돼지고기\s*(말고|빼|제외)/, "육류", "육류 제외"],
+  [/채소\s*(말고|빼|제외|싫)|야채\s*(말고|빼|제외)|나물\s*(말고|빼|제외)/, "채소", "채소 제외"],
+];
+
 const INGREDIENT_RULES: Rule<IngredientPreference>[] = [
-  [/고기\s*말고|고기\s*빼|육류\s*말고|채식|비건|고기\s*싫/, "채소", "채소"],
-  [/해산물\s*말고|생선\s*싫|비린|해물\s*빼/, "육류", "육류"],
   [
     new RegExp(`해산물|해물|생선|바다|조개|수산|물고기|${HOE}|낙지|전복|꼬막|꽃게|갈치|홍어|새우|굴(?![비])`),
     "해산물",
@@ -128,8 +134,9 @@ export function parseTasteText(input: string): ParseResult {
   const text = (input || "").trim();
   const pref: Partial<Preference> = {};
   const hits: ParsedHit[] = [];
+  const excludedIngredients: Array<Exclude<IngredientPreference, "상관없음">> = [];
 
-  if (!text) return { pref, hits };
+  if (!text) return { pref, hits, excludedIngredients };
 
   const push = (axis: ParsedAxis, phrase: string, reading: string) =>
     hits.push({ axis, label: AXIS_LABEL[axis], phrase, reading });
@@ -152,15 +159,16 @@ export function parseTasteText(input: string): ParseResult {
     push("raw", raw.phrase, raw.reading);
   }
 
-  // 부정한 낱말이 긍정 근거로 되돌아오지 않게 한다. '회 말고 익힌 걸로'에서
-  // '회'가 남아 있으면 주재료를 해산물로 읽는데, 사용자는 회를 물린 것이다.
-  // 부정 규칙(고기 말고 → 채소)은 원문에서 먼저 보고, 거기서 안 걸렸을 때만
-  // 물린 조각을 지운 문장으로 긍정 규칙을 본다.
-  const negatives = INGREDIENT_RULES.slice(0, 2);
-  const positives = INGREDIENT_RULES.slice(2);
-  const ingredient =
-    firstMatch(text, negatives) ??
-    firstMatch(text.replace(/\S{1,6}?\s*(말고|빼고|빼|싫)/g, " "), positives);
+  // “해산물 말고”를 곧바로 “육류”로 바꾸면 채소라는 또 다른 가능성을 잃는다.
+  // 그래서 부정은 제외 목록으로 따로 보관하고, 남은 문장에서 긍정 선호만 읽는다.
+  for (const [pattern, value, reading] of INGREDIENT_EXCLUSION_RULES) {
+    const match = text.match(pattern);
+    if (!match || excludedIngredients.includes(value)) continue;
+    excludedIngredients.push(value);
+    push("ingredient", match[0].trim(), reading);
+  }
+  const ingredientText = text.replace(/\S{1,10}?\s*(말고|빼고|빼|제외하고|제외|싫어|싫)/g, " ");
+  const ingredient = firstMatch(ingredientText, INGREDIENT_RULES);
   if (ingredient) {
     pref.ingredient = ingredient.value;
     push("ingredient", ingredient.phrase, ingredient.reading);
@@ -181,7 +189,7 @@ export function parseTasteText(input: string): ParseResult {
     }
   }
 
-  return { pref, hits };
+  return { pref, hits, excludedIngredients };
 }
 
 /** 아무것도 못 읽었을 때 보여 줄 말투 예시. 실제로 파서가 잡는 문장들이다. */
