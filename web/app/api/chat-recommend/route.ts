@@ -1,70 +1,184 @@
 import { NextResponse } from "next/server";
 
-import { streets } from "@/lib/data";
-import type { Street } from "@/lib/types";
+import { foods } from "@/lib/data";
+import { getKstMonth } from "@/lib/kst";
+import { parseTasteText } from "@/lib/parse-taste";
+import {
+  DEFAULT_PREFERENCE,
+  recommendFoods,
+  type Preference,
+} from "@/lib/recommend";
+import type { Food } from "@/lib/types";
 
 type ChatTurn = { role: "user" | "assistant"; content: string };
-type LlmResult = { reply: string; streetIds: string[]; keywords?: string[] };
+type LlmResult = { reply: string; foodIds: string[]; understood?: string[] };
 
-const foodStreets = streets.filter((s) => s.category === "음식");
+function compactFood(food: Food) {
+  return {
+    id: food.id,
+    name: food.name,
+    displayName: food.displayName,
+    ingredient: food.ingredient,
+    spicy: food.spicy,
+    hasSoup: food.hasSoup,
+    isRaw: food.isRaw,
+    mainIngredients: food.mainIngredients,
+    months: food.months,
+    restaurantCount: food.restaurantCount,
+  };
+}
 
-function searchableText(s: Street) {
-  return [s.name, s.description, s.sido, s.sigungu, s.address, ...s.foodKeywords]
-    .join(" ")
-    .toLowerCase();
+function lexicalScore(food: Food, message: string) {
+  const text = message.replace(/\s+/g, "").toLowerCase();
+  if (!text) return 0;
+  const fields = [food.name, food.displayName, food.ingredient]
+    .filter(Boolean)
+    .map((value) => String(value).replace(/\s+/g, "").toLowerCase());
+  let score = 0;
+  for (const field of fields) {
+    if (!field) continue;
+    if (text.includes(field)) score += 30;
+    if (field.includes(text) && text.length >= 2) score += 15;
+  }
+  return score;
+}
+
+function buildLocalCandidates(message: string) {
+  const parsed = parseTasteText(message);
+  const pref: Preference = {
+    ...DEFAULT_PREFERENCE,
+    month: getKstMonth(),
+    ...parsed.pref,
+  };
+
+  const tasteRanked = recommendFoods(foods, pref, 30);
+  const tasteMap = new Map(tasteRanked.map((item, index) => [item.food.id, 30 - index]));
+
+  return [...foods]
+    .map((food) => ({
+      food,
+      score: (tasteMap.get(food.id) ?? 0) + lexicalScore(food, message),
+    }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 50)
+    .map((item) => item.food);
 }
 
 function fallbackRecommend(message: string): LlmResult {
-  const q = message.trim().toLowerCase();
-  const tokens = q
-    .replace(/[^0-9a-zA-Z가-힣\s]/g, " ")
-    .split(/\s+/)
-    .filter((t) => t.length >= 2)
-    .filter((t) => !["먹고", "싶어", "싶어요", "추천", "해줘", "해주세요", "거리", "음식", "오늘", "근처"].includes(t));
+  const parsed = parseTasteText(message);
+  const pref: Preference = {
+    ...DEFAULT_PREFERENCE,
+    month: getKstMonth(),
+    ...parsed.pref,
+  };
 
-  const scored = foodStreets
-    .map((street) => {
-      const hay = searchableText(street);
-      let score = 0;
-      for (const token of tokens) {
-        if (street.foodKeywords.some((k) => k.toLowerCase().includes(token) || token.includes(k.toLowerCase()))) score += 8;
-        if (street.name.toLowerCase().includes(token)) score += 5;
-        if (hay.includes(token)) score += 2;
-      }
-      return { street, score };
-    })
-    .filter((x) => x.score > 0)
+  const exact = foods
+    .map((food) => ({ food, score: lexicalScore(food, message) }))
+    .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score)
-    .slice(0, 5);
+    .map((item) => item.food);
 
-  if (scored.length === 0) {
-    return {
-      reply: "말씀하신 음식과 직접 연결되는 특화거리를 데이터에서 바로 찾지는 못했어요. 먹고 싶은 재료나 메뉴를 조금 더 구체적으로 말씀해 주세요. 예: ‘전복 먹고 싶어’, ‘낙지 요리 추천해줘’.",
-      streetIds: [],
-      keywords: tokens,
-    };
+  const taste = recommendFoods(foods, pref, 12).map((item) => item.food);
+  const picked: Food[] = [];
+  const seen = new Set<string>();
+
+  for (const food of [...exact, ...taste]) {
+    if (seen.has(food.id)) continue;
+    seen.add(food.id);
+    picked.push(food);
+    if (picked.length >= 5) break;
   }
 
-  const names = scored.map((x) => x.street.name);
+  const understood = parsed.hits.map((hit) => `${hit.label}: ${hit.reading}`);
+  const summary = understood.length
+    ? `말씀하신 취향을 ${understood.join(", ")}로 이해했어요.`
+    : "구체적인 취향 표현은 적었지만 현재 제철과 음식 데이터 기준으로 후보를 골랐어요.";
+
   return {
-    reply: `좋아요. 관련성이 높은 특화거리로 ${names.join(", ")}를 찾았어요. 왼쪽 지도에 바로 표시했습니다. 가장 먼저 ${names[0]}부터 보시면 좋아요.`,
-    streetIds: scored.map((x) => x.street.id),
-    keywords: tokens,
+    reply: `${summary} ${picked.map((food) => food.displayName || food.name).join(", ")} 순으로 추천해요.`,
+    foodIds: picked.map((food) => food.id),
+    understood,
   };
 }
 
 function extractJson(text: string): LlmResult | null {
   try {
     const direct = JSON.parse(text) as LlmResult;
-    if (direct && typeof direct.reply === "string" && Array.isArray(direct.streetIds)) return direct;
+    if (direct && typeof direct.reply === "string" && Array.isArray(direct.foodIds)) return direct;
   } catch {}
+
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) return null;
   try {
     const parsed = JSON.parse(match[0]) as LlmResult;
-    if (parsed && typeof parsed.reply === "string" && Array.isArray(parsed.streetIds)) return parsed;
+    if (parsed && typeof parsed.reply === "string" && Array.isArray(parsed.foodIds)) return parsed;
   } catch {}
   return null;
+}
+
+async function callSchoolLlm(
+  url: string,
+  apiKey: string,
+  model: string,
+  message: string,
+  history: ChatTurn[],
+  catalog: ReturnType<typeof compactFood>[],
+) {
+  const endpoint = `${url.replace(/\/$/, "")}/v1/chat/completions`;
+  const system = `너는 광주·전남 미식 추천 AI다. 사용자의 자연어 취향을 이해하고 반드시 제공된 음식 데이터 안에서만 최대 5개를 추천한다.\n\n중요 규칙:\n1) 맵기(spicy 0~3), 국물(hasSoup), 날것(isRaw), 주재료(mainIngredients), 제철(months), 사용자가 직접 언급한 음식·재료를 함께 고려한다.\n2) 사용자가 말하지 않은 취향을 과하게 지어내지 않는다.\n3) foodIds에는 아래 데이터에 있는 id만 넣는다.\n4) 비슷한 음식만 반복하지 말고 가능하면 다양한 메뉴를 고른다.\n5) 한국어로 짧게 추천 이유를 설명한다.\n6) 오직 JSON만 반환한다. 형식: {"reply":"...","foodIds":["음식ID"],"understood":["매움","국물"]}\n\n현재 ${getKstMonth()}월 음식 후보:\n${JSON.stringify(catalog)}`;
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.2,
+      max_tokens: 700,
+      messages: [
+        { role: "system", content: system },
+        ...history.slice(-8),
+        { role: "user", content: message },
+      ],
+    }),
+  });
+
+  if (!response.ok) throw new Error(`School LLM error ${response.status}: ${await response.text()}`);
+  const data = (await response.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+  return extractJson(data.choices?.[0]?.message?.content ?? "");
+}
+
+async function callAnthropic(
+  apiKey: string,
+  model: string,
+  message: string,
+  history: ChatTurn[],
+  catalog: ReturnType<typeof compactFood>[],
+) {
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 700,
+      temperature: 0.2,
+      system: `너는 광주·전남 미식 추천 AI다. 사용자의 자연어 취향을 이해하고 반드시 제공된 음식 데이터 안에서만 최대 5개를 추천한다. 맵기(spicy 0~3), 국물(hasSoup), 날것(isRaw), 주재료(mainIngredients), 제철(months), 직접 언급한 음식·재료를 고려한다. 비슷한 음식만 반복하지 않는다. 오직 JSON만 반환한다. 형식: {"reply":"...","foodIds":["음식ID"],"understood":["..."]}\n\n현재 ${getKstMonth()}월 음식 후보:\n${JSON.stringify(catalog)}`,
+      messages: [...history.slice(-8), { role: "user", content: message }],
+    }),
+  });
+
+  if (!response.ok) throw new Error(`Anthropic error ${response.status}: ${await response.text()}`);
+  const data = (await response.json()) as { content?: Array<{ type: string; text?: string }> };
+  return extractJson(data.content?.find((item) => item.type === "text")?.text ?? "");
 }
 
 export async function POST(request: Request) {
@@ -73,53 +187,51 @@ export async function POST(request: Request) {
   if (!message) return NextResponse.json({ error: "message is required" }, { status: 400 });
 
   const fallback = fallbackRecommend(message);
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return NextResponse.json({ ...fallback, mode: "local" });
-
-  const catalog = foodStreets.map((s) => ({
-    id: s.id,
-    name: s.name,
-    description: s.description,
-    foodKeywords: s.foodKeywords,
-    region: `${s.sido} ${s.sigungu}`.trim(),
-    hasCoordinates: s.lat !== null && s.lon !== null,
-  }));
-  const history = (body.history ?? [])
-    .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
-    .slice(-8);
+  const candidates = buildLocalCandidates(message).map(compactFood);
+  const validIds = new Set(foods.map((food) => food.id));
+  const history = (body.history ?? []).filter(
+    (turn) =>
+      turn &&
+      (turn.role === "user" || turn.role === "assistant") &&
+      typeof turn.content === "string",
+  );
 
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: process.env.ANTHROPIC_MODEL || "claude-sonnet-5",
-        max_tokens: 700,
-        temperature: 0.2,
-        system: `너는 광주·전남 음식 특화거리 추천 도우미다. 사용자의 자연어 대화를 이해하고 제공된 거리 데이터 안에서만 추천한다.\n\n규칙:\n1) 특정 음식/재료는 foodKeywords, 거리명, 설명의 관련성을 최우선으로 본다.\n2) 관련성이 약한 거리를 억지로 추천하지 않는다.\n3) 최대 5개만 추천한다.\n4) 아래 거리 id만 streetIds에 넣는다.\n5) 좌표가 있는 거리를 우선하되 음식 관련성이 더 중요하다.\n6) 답변은 친근한 한국어 2~4문장. 추가 조건은 이전 대화 맥락을 반영한다.\n7) 오직 JSON만 반환한다. 형식: {"reply":"...","streetIds":["ST001"],"keywords":["전복"]}\n\n거리 데이터:\n${JSON.stringify(catalog)}`,
-        messages: [...history, { role: "user", content: message }],
-      }),
-    });
+    let parsed: LlmResult | null = null;
+    let mode = "local";
 
-    if (!res.ok) {
-      console.error("Anthropic error", res.status, await res.text());
-      return NextResponse.json({ ...fallback, mode: "local" });
+    const schoolUrl = process.env.SCHOOL_LLM_URL;
+    if (schoolUrl) {
+      parsed = await callSchoolLlm(
+        schoolUrl,
+        process.env.SCHOOL_LLM_API_KEY || "aix-key",
+        process.env.SCHOOL_LLM_MODEL || "Qwen/Qwen3-8B",
+        message,
+        history,
+        candidates,
+      );
+      mode = "school-llm";
+    } else if (process.env.ANTHROPIC_API_KEY) {
+      parsed = await callAnthropic(
+        process.env.ANTHROPIC_API_KEY,
+        process.env.ANTHROPIC_MODEL || "claude-sonnet-5",
+        message,
+        history,
+        candidates,
+      );
+      mode = "anthropic";
     }
-    const data = (await res.json()) as { content?: Array<{ type: string; text?: string }> };
-    const text = data.content?.find((c) => c.type === "text")?.text ?? "";
-    const parsed = extractJson(text);
+
     if (!parsed) return NextResponse.json({ ...fallback, mode: "local" });
 
-    const validIds = new Set(foodStreets.map((s) => s.id));
+    const foodIds = parsed.foodIds.filter((id) => validIds.has(id)).slice(0, 5);
+    if (foodIds.length === 0) return NextResponse.json({ ...fallback, mode: "local" });
+
     return NextResponse.json({
       reply: parsed.reply,
-      streetIds: parsed.streetIds.filter((id) => validIds.has(id)).slice(0, 5),
-      keywords: parsed.keywords ?? [],
-      mode: "llm",
+      foodIds,
+      understood: parsed.understood ?? [],
+      mode,
     });
   } catch (error) {
     console.error(error);

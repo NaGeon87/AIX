@@ -10,7 +10,7 @@ export interface MapMarker {
   lat: number;
   lon: number;
   label: string;
-  kind: "street" | "restaurant" | "me" | "tourism";
+  kind: "street" | "food" | "restaurant" | "me" | "tourism";
   /** 강조할 마커. 라벨을 항상 띄운다. */
   highlight?: boolean;
   /** 음식거리 대표 OpenMoji 코드. street 마커에서만 사용한다. */
@@ -31,6 +31,7 @@ const TOURISM_COLOR = "#6b4a8f";
 
 const MARKER_COLOR: Record<MapMarker["kind"], string> = {
   street: STREET_COLOR,
+  food: STREET_COLOR,
   restaurant: RESTAURANT_COLOR,
   me: ME_COLOR,
   tourism: TOURISM_COLOR,
@@ -106,6 +107,7 @@ export function RegionMap({
   height = 260,
   onSelect,
   selectedId,
+  lockToJeonnam = false,
 }: {
   markers: MapMarker[];
   height?: number | string;
@@ -113,6 +115,8 @@ export function RegionMap({
   onSelect?: (id: string) => void;
   /** 강조해서 가운데로 옮길 마커. 선택이 바뀌어도 지도를 다시 만들지 않는다. */
   selectedId?: string;
+  /** 전라남도 권역 안에서만 지도를 탐색하도록 제한한다. */
+  lockToJeonnam?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -143,10 +147,24 @@ export function RegionMap({
       if (cancelled || !containerRef.current) return;
       const leaflet = leafletModule.default;
 
+      // 전남 음식 탐색 화면에서는 사용자가 지도를 멀리 끌어 다른 지역으로
+      // 벗어나지 않도록 넉넉한 전남 권역 경계를 maxBounds로 둔다.
+      const jeonnamOuterBounds = leaflet.latLngBounds(
+        [33.85, 124.85],
+        [35.65, 128.05],
+      );
+
       map = leaflet.map(containerRef.current, {
         scrollWheelZoom: false, // 페이지를 스크롤하다 지도 위에서 확대되는 사고를 막는다
         attributionControl: true,
         zoomControl: true,
+        ...(lockToJeonnam
+          ? {
+              maxBounds: jeonnamOuterBounds,
+              maxBoundsViscosity: 1,
+              minZoom: 8,
+            }
+          : {}),
       });
       mapRef.current = map;
 
@@ -173,7 +191,7 @@ export function RegionMap({
         // onSelect가 있으면 내 위치를 뺀 핀은 누를 수 있다. 무엇으로 이어질지는
         // 부르는 쪽이 정한다(지금은 특화거리 핀 → 거리 상세).
         const clickable = Boolean(onSelectRef.current) && m.kind !== "me";
-        const markerIcon = m.kind === "street"
+        const markerIcon = m.kind === "street" || m.kind === "food"
           ? buildFoodIcon(leaflet, m, { interactive: clickable, selected: Boolean(m.highlight) })
           : buildDivIcon(leaflet, color, size, { interactive: clickable });
         const marker = leaflet.marker([m.lat, m.lon], {
@@ -192,7 +210,7 @@ export function RegionMap({
           marker.bindTooltip(m.label, {
             permanent: true,
             direction: "top",
-            offset: [0, m.kind === "street" ? -30 : -size / 2 - 4],
+            offset: [0, m.kind === "street" || m.kind === "food" ? -30 : -size / 2 - 4],
             className: "region-map-label",
           });
         } else {
@@ -200,11 +218,38 @@ export function RegionMap({
         }
       }
 
-      if (points.length === 1) {
+      if (lockToJeonnam) {
+        // 첫 화면은 추천 결과와 무관하게 항상 전라남도 전체가 먼저 보인다.
+        // 추천이 생기면 별도의 selectedId effect가 해당 음식 위치로 flyTo 한다.
+        const jeonnamViewBounds = leaflet.latLngBounds(
+          [34.0, 125.0],
+          [35.5, 127.95],
+        );
+        map.fitBounds(jeonnamViewBounds, { padding: [18, 18] });
+      } else if (points.length === 1) {
         map.setView([points[0].lat, points[0].lon], 14);
       } else {
         const bounds = leaflet.latLngBounds(points.map((p) => [p.lat, p.lon]));
         map.fitBounds(bounds, { padding: [32, 32], maxZoom: 15 });
+      }
+
+      // 추천 결과가 생기면서 새 음식 마커가 추가된 경우에는 map 자체가
+      // 다시 만들어지므로 selectedId effect보다 이 코드가 더 확실하다.
+      // 초기 전남 전체 화면을 그린 직후 선택된 음식 위치로 부드럽게 이동한다.
+      if (selectedId) {
+        const selectedMarker = markerRefs.current.get(selectedId);
+        if (selectedMarker) {
+          const pos = selectedMarker.getLatLng();
+          window.setTimeout(() => {
+            if (!cancelled && map) {
+              map.flyTo(pos, Math.max(map.getZoom(), 13), {
+                animate: true,
+                duration: 1.15,
+              });
+              selectedMarker.openTooltip();
+            }
+          }, 120);
+        }
       }
     });
 
@@ -215,7 +260,7 @@ export function RegionMap({
       markerRefs.current = new Map();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- pointsKey가 실질적인 의존성이다.
-  }, [pointsKey]);
+  }, [pointsKey, lockToJeonnam]);
 
   // 선택된 핀으로 지도를 옮기고 라벨을 연다. 지도 재생성과 분리해서,
   // 선택이 바뀌어도 확대·중심이 초기화되지 않는다.
@@ -224,7 +269,7 @@ export function RegionMap({
     if (leaflet) {
       // 선택이 바뀌어도 지도를 재생성하지 않고 음식 아이콘의 크기/테두리만 갱신한다.
       for (const point of points) {
-        if (point.kind !== "street") continue;
+        if (point.kind !== "street" && point.kind !== "food") continue;
         const mapMarker = markerRefs.current.get(point.id);
         if (!mapMarker) continue;
         mapMarker.setIcon(buildFoodIcon(leaflet, point, {

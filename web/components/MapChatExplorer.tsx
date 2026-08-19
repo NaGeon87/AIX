@@ -1,88 +1,179 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { RegionMap, type MapMarker } from "@/components/RegionMap";
-import type { Street } from "@/lib/types";
+import type { Food, Street } from "@/lib/types";
 
 type Message = { role: "user" | "assistant"; content: string };
-type Tourism = { sigungu: string; name: string; location?: string; note?: string };
-type Festival = { sigungu: string; name: string; period: string; place: string; source?: string };
 
-export function MapChatExplorer({ streets }: { streets: Street[] }) {
-  const [messages, setMessages] = useState<Message[]>([{ role: "assistant", content: "먹고 싶은 음식이나 재료를 편하게 말씀해 주세요. 예: ‘전복을 먹고 싶어’. 왼쪽 지도에서 거리 핀을 누르면 주변 관광지와 축제도 함께 추천해드릴게요." }]);
+function spicyText(level: number) {
+  return ["안 매움", "약간 매움", "매움", "아주 매움"][level] ?? `${level}`;
+}
+
+function foodEmoji(food: Food) {
+  const text = `${food.name} ${food.displayName} ${food.ingredient}`;
+  if (/전복|조개|꼬막|바지락|키조개/.test(text)) return "🐚";
+  if (/낙지|문어|주꾸미/.test(text)) return "🐙";
+  if (/게장|꽃게|게/.test(text)) return "🦀";
+  if (/닭|오리/.test(text)) return "🍗";
+  if (/한우|소고기|불고기|떡갈비|돼지|곱창/.test(text)) return "🥩";
+  if (/생선|갈치|장어|굴비|홍어|민어|삼치|회/.test(text)) return "🐟";
+  if (food.mainIngredients.includes("채소")) return "🥬";
+  if (food.mainIngredients.includes("육류")) return "🥩";
+  if (food.mainIngredients.includes("해산물")) return "🐟";
+  return "🍽️";
+}
+
+export function MapChatExplorer({ streets, foods }: { streets: Street[]; foods: Food[] }) {
+  const [messages, setMessages] = useState<Message[]>([
+    {
+      role: "assistant",
+      content:
+        "취향을 자연스럽게 말해 주세요. 예: ‘매콤한 국물 해산물이 먹고 싶어’, ‘날것 말고 담백한 고기 요리 추천해줘’. 음식 데이터에서 잘 맞는 메뉴를 골라드릴게요.",
+    },
+  ]);
   const [input, setInput] = useState("");
-  const [recommendedIds, setRecommendedIds] = useState<string[]>([]);
+  const [recommendedFoodIds, setRecommendedFoodIds] = useState<string[]>([]);
   const [selectedId, setSelectedId] = useState<string | undefined>();
-  const [nearbyOpen, setNearbyOpen] = useState(false);
-  const [tourism, setTourism] = useState<Tourism[]>([]);
-  const [festivals, setFestivals] = useState<Festival[]>([]);
   const [pending, setPending] = useState(false);
 
-  useEffect(() => {
-    Promise.all([
-      fetch("/data/tourism.json").then((r) => r.json()),
-      fetch("/data/festivals.json").then((r) => r.json()),
-    ]).then(([t, f]) => {
-      setTourism(t.designated ?? []);
-      setFestivals(f ?? []);
-    }).catch(() => {});
-  }, []);
+  const selectedStreet = useMemo(
+    () => streets.find((street) => street.id === selectedId),
+    [selectedId, streets],
+  );
 
-  const recommended = useMemo(() => recommendedIds.map((id) => streets.find((s) => s.id === id)).filter(Boolean) as Street[], [recommendedIds, streets]);
-  const selectedStreet = useMemo(() => streets.find((s) => s.id === selectedId), [selectedId, streets]);
+  const recommendedFoods = useMemo(
+    () =>
+      recommendedFoodIds
+        .map((id) => foods.find((food) => food.id === id))
+        .filter(Boolean) as Food[],
+    [recommendedFoodIds, foods],
+  );
 
-  // 입력 전에도 좌표가 있는 음식거리를 모두 보여준다. 추천 후에는 선택 지점만 강조하고
-  // RegionMap의 flyTo가 해당 위치로 부드럽게 이동한다.
-  const markers = useMemo<MapMarker[]>(() => streets
-    .filter((s) => s.lat !== null && s.lon !== null)
-    .map((s) => ({
-      id: s.id,
-      lat: s.lat as number,
-      lon: s.lon as number,
-      label: s.name,
-      kind: "street" as const,
-      highlight: s.id === selectedId,
-      iconCode: s.iconCode,
-      iconFallback: s.iconFallback,
-      iconLabel: s.iconLabel,
-    })), [streets, selectedId]);
+  // 첫 화면에는 광주를 제외하고 전라남도 음식특화거리만 표시한다.
+  // LLM이 음식을 추천하면 해당 음식을 실제로 취급하는 전남 식당 좌표를
+  // 음식 핀으로 최대 2곳씩 추가한다.
+  const { markers, firstFoodMarkerByFoodId, foodMarkerCount } = useMemo(() => {
+    const streetMarkers: MapMarker[] = streets
+      .filter(
+        (street) =>
+          street.sido === "전남" && street.lat !== null && street.lon !== null,
+      )
+      .map((street) => ({
+        id: street.id,
+        lat: street.lat as number,
+        lon: street.lon as number,
+        label: street.name,
+        kind: "street" as const,
+        highlight: street.id === selectedId,
+        iconCode: street.iconCode,
+        iconFallback: street.iconFallback,
+        iconLabel: street.iconLabel,
+      }));
 
-  const nearbyTourism = useMemo(() => {
-    if (!selectedStreet) return [];
-    return tourism.filter((t) => t.sigungu === selectedStreet.sigungu).slice(0, 4);
-  }, [selectedStreet, tourism]);
+    const foodMarkers: MapMarker[] = [];
+    const firstByFood = new Map<string, string>();
+    const usedRestaurants = new Set<string>();
 
-  const nearbyFestivals = useMemo(() => {
-    if (!selectedStreet) return [];
-    const keys = [selectedStreet.sigungu, `${selectedStreet.sido} ${selectedStreet.sigungu}`];
-    return festivals.filter((f) => keys.includes(f.sigungu)).slice(0, 4);
-  }, [selectedStreet, festivals]);
+    for (const food of recommendedFoods) {
+      const restaurants = food.restaurants
+        .filter(
+          (restaurant) =>
+            restaurant.region === "전남" &&
+            restaurant.lat !== null &&
+            restaurant.lon !== null,
+        )
+        .sort(
+          (a, b) =>
+            Number(b.isLocalSpecialty) - Number(a.isLocalSpecialty),
+        );
 
-  const selectPoint = (id: string) => {
-    setSelectedId(id);
-    setNearbyOpen(true);
-  };
+      let added = 0;
+      for (const restaurant of restaurants) {
+        if (usedRestaurants.has(restaurant.id)) continue;
+        usedRestaurants.add(restaurant.id);
+        const id = `food:${food.id}:${restaurant.id}`;
+        if (!firstByFood.has(food.id)) firstByFood.set(food.id, id);
+        foodMarkers.push({
+          id,
+          lat: restaurant.lat as number,
+          lon: restaurant.lon as number,
+          label: `${food.displayName || food.name} · ${restaurant.name}`,
+          kind: "food",
+          highlight: id === selectedId,
+          iconFallback: foodEmoji(food),
+          iconLabel: `${food.displayName || food.name} 먹을 수 있는 곳`,
+        });
+        added += 1;
+        if (added >= 2) break;
+      }
+    }
+
+    return {
+      markers: [...streetMarkers, ...foodMarkers],
+      firstFoodMarkerByFoodId: firstByFood,
+      foodMarkerCount: foodMarkers.length,
+    };
+  }, [streets, recommendedFoods, selectedId]);
 
   const submit = async (preset?: string) => {
     const text = (preset ?? input).trim();
     if (!text || pending) return;
+
     const previous = messages;
     setMessages([...previous, { role: "user", content: text }]);
     setInput("");
     setPending(true);
-    setNearbyOpen(false);
+
     try {
-      const response = await fetch("/api/chat-recommend", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: text, history: previous }) });
-      const data = (await response.json()) as { reply?: string; streetIds?: string[] };
-      const ids = data.streetIds ?? [];
-      setRecommendedIds(ids);
-      setSelectedId(ids[0]); // 이 값이 바뀌면 지도가 flyTo로 '슝' 이동한다.
-      setMessages((current) => [...current, { role: "assistant", content: data.reply ?? "추천 결과를 만들지 못했어요. 다른 음식이나 재료로 다시 말씀해 주세요." }]);
+      const response = await fetch("/api/chat-recommend", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: text, history: previous }),
+      });
+      const data = (await response.json()) as { reply?: string; foodIds?: string[] };
+      const ids = data.foodIds ?? [];
+      setRecommendedFoodIds(ids);
+
+      // 첫 추천 음식의 전남 식당 좌표가 있으면 지도도 그 지점으로 이동한다.
+      const firstFood = ids
+        .map((id) => foods.find((food) => food.id === id))
+        .find(Boolean);
+      const firstRestaurant = firstFood?.restaurants
+        .filter(
+          (restaurant) =>
+            restaurant.region === "전남" &&
+            restaurant.lat !== null &&
+            restaurant.lon !== null,
+        )
+        .sort(
+          (a, b) =>
+            Number(b.isLocalSpecialty) - Number(a.isLocalSpecialty),
+        )[0];
+      if (firstFood && firstRestaurant) {
+        setSelectedId(`food:${firstFood.id}:${firstRestaurant.id}`);
+      } else {
+        setSelectedId(undefined);
+      }
+
+      setMessages((current) => [
+        ...current,
+        {
+          role: "assistant",
+          content:
+            data.reply ?? "추천 결과를 만들지 못했어요. 취향을 조금 다르게 말씀해 주세요.",
+        },
+      ]);
     } catch {
-      setMessages((current) => [...current, { role: "assistant", content: "연결 중 문제가 생겼어요. 잠시 후 다시 입력해 주세요." }]);
-    } finally { setPending(false); }
+      setMessages((current) => [
+        ...current,
+        { role: "assistant", content: "연결 중 문제가 생겼어요. 잠시 후 다시 입력해 주세요." },
+      ]);
+    } finally {
+      setPending(false);
+    }
   };
 
   return (
@@ -90,53 +181,220 @@ export function MapChatExplorer({ streets }: { streets: Street[] }) {
       <div className="grid min-h-dvh lg:h-dvh lg:grid-cols-[minmax(0,1.35fr)_minmax(400px,0.65fr)]">
         <section className="relative min-h-[52vh] border-b border-line bg-surface lg:min-h-0 lg:border-b-0 lg:border-r">
           <div className="absolute left-5 top-5 z-[800] rounded-2xl border border-line bg-surface/95 px-4 py-3 shadow-sm backdrop-blur">
-            <Link href="/" className="text-[12px] font-bold text-brand">← 전라맛도</Link>
-            <p className="mt-1 font-display text-[20px] text-fg">실시간 미식 지도</p>
-            <p className="mt-0.5 text-[12px] text-fg-muted">핀을 누르면 주변 여행지도 추천해요</p>
+            <Link href="/" className="text-[12px] font-bold text-brand">
+              ← 전라맛도
+            </Link>
+            <p className="mt-1 font-display text-[20px] text-fg">전라남도 음식거리 지도</p>
+            <p className="mt-0.5 text-[12px] text-fg-muted">
+              전남 음식거리를 보고, AI 추천 음식 위치도 확인하세요
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-fg-muted">
+              <span className="rounded-full border border-line bg-surface px-2 py-1">📍 음식특화거리</span>
+              <span className="rounded-full border border-line bg-surface px-2 py-1">🍽️ AI 추천 음식 위치</span>
+            </div>
           </div>
 
-          <RegionMap markers={markers} height="100%" selectedId={selectedId} onSelect={selectPoint} />
+          <RegionMap
+            markers={markers}
+            height="100%"
+            selectedId={selectedId}
+            onSelect={(id) => {
+              if (streets.some((street) => street.id === id)) setSelectedId(id);
+            }}
+            lockToJeonnam
+          />
 
-          {nearbyOpen && selectedStreet && (
-            <div className="absolute bottom-4 left-4 right-4 z-[850] max-h-[42%] overflow-y-auto rounded-2xl border border-line bg-surface/95 p-4 shadow-lg backdrop-blur lg:right-auto lg:w-[430px]">
+          {selectedStreet && (
+            <div className="absolute bottom-4 left-4 right-4 z-[850] rounded-2xl border border-line bg-surface/95 p-4 shadow-lg backdrop-blur lg:right-auto lg:w-[430px]">
               <div className="flex items-start justify-between gap-3">
-                <div><p className="text-[11px] font-bold text-brand">{selectedStreet.sigungu} 주변 추천</p><h3 className="mt-0.5 font-display text-[18px] text-fg">{selectedStreet.name} + 여행</h3></div>
-                <button type="button" onClick={() => setNearbyOpen(false)} className="rounded-full border border-line px-2.5 py-1 text-[12px] text-fg-muted">닫기</button>
-              </div>
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                <div>
-                  <p className="mb-1.5 text-[12px] font-bold text-fg">📍 근처 관광지</p>
-                  <div className="space-y-1.5">
-                    {nearbyTourism.length ? nearbyTourism.map((t) => <div key={`${t.sigungu}-${t.name}`} className="rounded-xl bg-surface-alt px-3 py-2"><p className="text-[13px] font-bold text-fg">{t.name}</p><p className="mt-0.5 text-[11px] text-fg-muted">{t.location || t.sigungu}</p></div>) : <p className="rounded-xl bg-surface-alt px-3 py-2 text-[11px] text-fg-muted">현재 같은 시·군의 등록 관광지 데이터가 없어요.</p>}
-                  </div>
+                <div className="min-w-0">
+                  <p className="text-[11px] font-bold text-brand">
+                    {selectedStreet.sido} {selectedStreet.sigungu}
+                  </p>
+                  <h2 className="mt-0.5 font-display text-[20px] text-fg">
+                    {selectedStreet.name}
+                  </h2>
                 </div>
-                <div>
-                  <p className="mb-1.5 text-[12px] font-bold text-fg">🎉 함께 볼 축제</p>
-                  <div className="space-y-1.5">
-                    {nearbyFestivals.length ? nearbyFestivals.map((f) => <div key={`${f.sigungu}-${f.name}`} className="rounded-xl bg-surface-alt px-3 py-2"><p className="text-[13px] font-bold text-fg">{f.name}</p><p className="mt-0.5 text-[11px] text-fg-muted">{f.period}</p><p className="text-[10px] text-fg-muted">{f.place}</p></div>) : <p className="rounded-xl bg-surface-alt px-3 py-2 text-[11px] text-fg-muted">등록된 2026 축제 일정이 없어요.</p>}
-                  </div>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedId(undefined)}
+                  className="shrink-0 rounded-full border border-line px-2.5 py-1 text-[12px] text-fg-muted"
+                >
+                  닫기
+                </button>
               </div>
-            </div>
-          )}
 
-          {!nearbyOpen && recommended.length > 0 && (
-            <div className="absolute bottom-4 left-4 right-4 z-[800] flex gap-2 overflow-x-auto pb-1">
-              {recommended.map((street, index) => <button key={street.id} type="button" onClick={() => selectPoint(street.id)} className={`min-w-[210px] rounded-2xl border px-4 py-3 text-left shadow-sm backdrop-blur transition ${selectedId === street.id ? "border-brand bg-brand text-fg-inverse" : "border-line bg-surface/95 text-fg"}`}><span className="block text-[11px] opacity-70">추천 {index + 1}</span><span className="mt-0.5 block text-[14px] font-bold">{street.name}</span><span className="mt-1 block truncate text-[11px] opacity-75">{street.sido} {street.sigungu}</span></button>)}
+              <p className="mt-2 text-[13px] leading-relaxed text-fg-muted">
+                {selectedStreet.description || "지역 대표 음식점이 모여 있는 음식특화거리입니다."}
+              </p>
+
+              {selectedStreet.foodKeywords.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {selectedStreet.foodKeywords.slice(0, 5).map((keyword) => (
+                    <span
+                      key={keyword}
+                      className="rounded-full bg-accent-soft px-2.5 py-1 text-[11px] font-medium text-fg"
+                    >
+                      {keyword}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              <p className="mt-3 truncate text-[11px] text-fg-muted">{selectedStreet.address}</p>
+
+              <Link
+                href={`/street/${selectedStreet.id}`}
+                className="mt-3 flex w-full items-center justify-center rounded-xl bg-brand px-4 py-3 text-[14px] font-bold text-fg-inverse transition hover:opacity-90"
+              >
+                거리 자세히 보기 · 근처 식당 추천 →
+              </Link>
             </div>
           )}
         </section>
 
         <section className="flex min-h-[48vh] flex-col bg-surface lg:min-h-0">
-          <header className="border-b border-line px-5 py-4"><p className="font-display text-[21px] text-fg">남도 미식 AI</p><p className="mt-0.5 text-[12px] text-fg-muted">대화하면 지도가 이동하고, 핀을 누르면 주변 여행지를 보여줘요</p></header>
-          <div className="flex-1 space-y-3 overflow-y-auto px-5 py-5">
-            {messages.map((message, index) => <div key={index} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}><div className={`max-w-[88%] rounded-2xl px-4 py-3 text-[14px] leading-relaxed ${message.role === "user" ? "rounded-br-md bg-brand text-fg-inverse" : "rounded-bl-md border border-line bg-surface-alt text-fg"}`}>{message.content}</div></div>)}
-            {pending && <div className="flex justify-start"><div className="rounded-2xl rounded-bl-md border border-line bg-surface-alt px-4 py-3 text-[13px] text-fg-muted">관련 거리를 찾는 중…</div></div>}
+          <header className="border-b border-line px-5 py-4">
+            <p className="font-display text-[21px] text-fg">취향 음식 추천 AI</p>
+            <p className="mt-0.5 text-[12px] text-fg-muted">
+              자연어 취향을 분석해 296개 음식 데이터에서 메뉴를 추천해요
+            </p>
+            {foodMarkerCount > 0 && (
+              <p className="mt-1 text-[11px] font-medium text-brand">
+                추천 음식을 먹을 수 있는 전남 위치 {foodMarkerCount}곳을 지도에 표시했어요
+              </p>
+            )}
+          </header>
+
+          <div className="flex-1 overflow-y-auto px-5 py-5">
+            <div className="space-y-3">
+              {messages.map((message, index) => (
+                <div
+                  key={index}
+                  className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
+                >
+                  <div
+                    className={`max-w-[88%] rounded-2xl px-4 py-3 text-[14px] leading-relaxed ${
+                      message.role === "user"
+                        ? "rounded-br-md bg-brand text-fg-inverse"
+                        : "rounded-bl-md border border-line bg-surface-alt text-fg"
+                    }`}
+                  >
+                    {message.content}
+                  </div>
+                </div>
+              ))}
+              {pending && (
+                <div className="flex justify-start">
+                  <div className="rounded-2xl rounded-bl-md border border-line bg-surface-alt px-4 py-3 text-[13px] text-fg-muted">
+                    음식 데이터에서 취향에 맞는 메뉴를 고르는 중…
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {recommendedFoods.length > 0 && (
+              <section className="mt-5 border-t border-line pt-4">
+                <p className="mb-2 text-[12px] font-bold text-fg-muted">추천 음식</p>
+                <div className="space-y-2.5">
+                  {recommendedFoods.map((food, index) => (
+                    <article key={food.id} className="rounded-2xl border border-line bg-canvas p-3.5">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-[10px] font-bold text-brand">추천 {index + 1}</p>
+                          <h3 className="mt-0.5 font-display text-[18px] text-fg">
+                            {food.displayName || food.name}
+                          </h3>
+                          <p className="mt-0.5 text-[11px] text-fg-muted">
+                            주재료 {food.ingredient} · 등록 식당 {food.restaurantCount}곳
+                          </p>
+                        </div>
+                        <span className="shrink-0 rounded-full border border-line bg-surface px-2.5 py-1 text-[10px] text-fg-muted">
+                          {food.months.length ? `${food.months.join("·")}월 제철` : "계절 정보 없음"}
+                        </span>
+                      </div>
+                      {firstFoodMarkerByFoodId.get(food.id) && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedId(firstFoodMarkerByFoodId.get(food.id))}
+                          className="mt-2.5 rounded-lg border border-brand px-3 py-1.5 text-[11px] font-bold text-brand transition hover:bg-accent-soft"
+                        >
+                          지도에서 이 음식 보기
+                        </button>
+                      )}
+                      <div className="mt-2.5 flex flex-wrap gap-1.5 text-[10px]">
+                        <span className="rounded-full bg-surface px-2 py-1 text-fg-muted">
+                          🌶 {spicyText(food.spicy)}
+                        </span>
+                        <span className="rounded-full bg-surface px-2 py-1 text-fg-muted">
+                          {food.hasSoup ? "🥣 국물 있음" : "🍽 국물 없음"}
+                        </span>
+                        <span className="rounded-full bg-surface px-2 py-1 text-fg-muted">
+                          {food.isRaw ? "🐟 날것" : "🔥 익힌 음식"}
+                        </span>
+                        {food.mainIngredients.map((category) => (
+                          <span
+                            key={category}
+                            className="rounded-full bg-surface px-2 py-1 text-fg-muted"
+                          >
+                            {category}
+                          </span>
+                        ))}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            )}
           </div>
+
           <div className="border-t border-line p-4">
-            {messages.length === 1 && <div className="mb-3 flex flex-wrap gap-1.5">{["전복을 먹고 싶어", "낙지 요리 추천해줘", "떡갈비 먹으러 가고 싶어"].map((example) => <button key={example} type="button" onClick={() => submit(example)} className="rounded-full border border-line-strong bg-surface px-3 py-1.5 text-[12px] text-fg hover:border-brand hover:text-brand">{example}</button>)}</div>}
-            <div className="flex items-end gap-2"><label htmlFor="chat-input" className="sr-only">먹고 싶은 음식 입력</label><textarea id="chat-input" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }} rows={2} placeholder="예: 전복을 먹고 싶어" className="min-h-[52px] flex-1 resize-none rounded-2xl border border-line bg-canvas px-4 py-3 text-[14px] text-fg outline-none placeholder:text-fg-muted focus:border-brand"/><button type="button" disabled={!input.trim() || pending} onClick={() => submit()} className="h-[52px] shrink-0 rounded-2xl bg-brand px-5 text-[14px] font-bold text-fg-inverse disabled:opacity-40">보내기</button></div>
-            <p className="mt-2 text-[10px] leading-relaxed text-fg-muted">지도 음식 아이콘은 각 특화거리의 대표 메뉴를 뜻하며, 위치는 거리의 대표 부근을 표시합니다. 관광지는 같은 시·군의 등록 데이터를 우선 추천합니다. · Food icons: OpenMoji (CC BY-SA 4.0)</p>
+            {messages.length === 1 && (
+              <div className="mb-3 flex flex-wrap gap-1.5">
+                {["매콤한 국물 해산물", "안 매운 고기 요리", "회 말고 담백한 음식"].map(
+                  (example) => (
+                    <button
+                      key={example}
+                      type="button"
+                      onClick={() => submit(example)}
+                      className="rounded-full border border-line-strong bg-surface px-3 py-1.5 text-[12px] text-fg hover:border-brand hover:text-brand"
+                    >
+                      {example}
+                    </button>
+                  ),
+                )}
+              </div>
+            )}
+            <div className="flex items-end gap-2">
+              <label htmlFor="chat-input" className="sr-only">
+                음식 취향 입력
+              </label>
+              <textarea
+                id="chat-input"
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    submit();
+                  }
+                }}
+                rows={2}
+                placeholder="예: 매콤하고 따뜻한 국물 해산물이 먹고 싶어"
+                className="min-h-[52px] flex-1 resize-none rounded-2xl border border-line bg-canvas px-4 py-3 text-[14px] text-fg outline-none placeholder:text-fg-muted focus:border-brand"
+              />
+              <button
+                type="button"
+                disabled={!input.trim() || pending}
+                onClick={() => submit()}
+                className="h-[52px] shrink-0 rounded-2xl bg-brand px-5 text-[14px] font-bold text-fg-inverse disabled:opacity-40"
+              >
+                보내기
+              </button>
+            </div>
+            <p className="mt-2 text-[10px] leading-relaxed text-fg-muted">
+              지도는 전라남도 권역 안에서만 탐색됩니다. 기본 핀은 음식특화거리 대표 부근이며, AI 추천 후 추가되는 음식 핀은 해당 메뉴를 취급하는 전남 식당 위치입니다.
+            </p>
           </div>
         </section>
       </div>

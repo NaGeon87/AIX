@@ -3,41 +3,86 @@ import { notFound } from "next/navigation";
 
 import { type MapMarker } from "@/components/RegionMap";
 import { StreetMapPanel } from "@/components/StreetMapPanel";
-import { TasteBadges } from "@/components/TasteChart";
 import { findStreet, foods, streets } from "@/lib/data";
-import { streetDisplayName } from "@/lib/korean";
-import {
-  matchStreets,
-  preferenceFromQuery,
-  preferenceToQuery,
-  recommendFoods,
-} from "@/lib/recommend";
-import type { Food } from "@/lib/types";
+import type { Food, Restaurant } from "@/lib/types";
 
 export function generateStaticParams() {
-  return streets.map((s) => ({ id: s.id }));
+  return streets.map((street) => ({ id: street.id }));
 }
 
-export default async function StreetPage({
-  params,
-  searchParams,
-}: {
-  params: Promise<{ id: string }>;
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
-}) {
+function normalize(value: string) {
+  return value.replace(/\s+/g, "").toLowerCase();
+}
+
+function foodMatchesStreet(food: Food, keywords: string[]) {
+  const fields = [food.name, food.displayName, food.ingredient].map(normalize);
+  return keywords.some((keyword) => {
+    const key = normalize(keyword);
+    return fields.some((field) => field.includes(key) || key.includes(field));
+  });
+}
+
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number) {
+  const toRad = (degree: number) => (degree * Math.PI) / 180;
+  const earth = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * earth * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+type Shop = {
+  restaurant: Restaurant;
+  menus: string[];
+  distanceKm: number | null;
+};
+
+export default async function StreetPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const street = findStreet(id);
   if (!street) notFound();
 
-  const query = await searchParams;
-  const pref = preferenceFromQuery(query);
+  const keywordFoods = foods.filter((food) => foodMatchesStreet(food, street.foodKeywords));
+  const sourceFoods = keywordFoods.length > 0 ? keywordFoods : foods;
+  const shopMap = new Map<string, { restaurant: Restaurant; menus: Set<string> }>();
 
-  // 이 거리와 실제로 연결되는 추천 음식만 남긴다. 상위 30건까지 훑어야
-  // 특정 거리에 걸리는 음식이 충분히 잡힌다.
-  const scored = recommendFoods(foods, pref, 30);
-  const related = scored.filter((item) =>
-    matchStreets(item.food, streets, 3).some((m) => m.street.id === street.id),
-  );
+  for (const food of sourceFoods) {
+    for (const restaurant of food.restaurants) {
+      if (restaurant.area !== street.sigungu) continue;
+      const key = restaurant.id || `${restaurant.name}-${restaurant.address}`;
+      const existing = shopMap.get(key);
+      if (existing) {
+        existing.menus.add(food.displayName || food.name);
+      } else {
+        shopMap.set(key, {
+          restaurant,
+          menus: new Set([food.displayName || food.name]),
+        });
+      }
+    }
+  }
+
+  const shops: Shop[] = [...shopMap.values()]
+    .map(({ restaurant, menus }) => ({
+      restaurant,
+      menus: [...menus].slice(0, 3),
+      distanceKm:
+        street.lat !== null &&
+        street.lon !== null &&
+        restaurant.lat !== null &&
+        restaurant.lon !== null
+          ? haversineKm(street.lat, street.lon, restaurant.lat, restaurant.lon)
+          : null,
+    }))
+    .sort((a, b) => {
+      if (a.distanceKm !== null && b.distanceKm !== null) return a.distanceKm - b.distanceKm;
+      if (a.distanceKm !== null) return -1;
+      if (b.distanceKm !== null) return 1;
+      return Number(b.restaurant.isLocalSpecialty) - Number(a.restaurant.isLocalSpecialty);
+    })
+    .slice(0, 12);
 
   const markers: MapMarker[] = [];
   if (street.lat !== null && street.lon !== null) {
@@ -48,209 +93,129 @@ export default async function StreetPage({
       label: street.name,
       kind: "street",
       highlight: true,
+      iconCode: street.iconCode,
+      iconFallback: street.iconFallback,
+      iconLabel: street.iconLabel,
     });
   }
-  const shops: { food: Food; name: string; address: string; specialty: boolean }[] = [];
-  for (const item of related.slice(0, 5)) {
-    for (const r of item.food.restaurants) {
-      shops.push({
-        food: item.food,
-        name: r.name,
-        address: r.address,
-        specialty: r.isLocalSpecialty,
-      });
-      if (r.lat !== null && r.lon !== null) {
-        markers.push({
-          id: `${item.food.id}-${r.id}`,
-          lat: r.lat,
-          lon: r.lon,
-          label: r.name,
-          kind: "restaurant",
-        });
-      }
-    }
+
+  for (const shop of shops.slice(0, 8)) {
+    if (shop.restaurant.lat === null || shop.restaurant.lon === null) continue;
+    markers.push({
+      id: `shop-${shop.restaurant.id}`,
+      lat: shop.restaurant.lat,
+      lon: shop.restaurant.lon,
+      label: shop.restaurant.name,
+      kind: "restaurant",
+    });
   }
 
-  const mapQuery = encodeURIComponent(street.address || street.name);
-
   return (
-    <main className="mx-auto min-h-dvh w-full max-w-[520px] bg-canvas pb-12">
-      {/* 지도가 주인공이라 헤더는 얇은 앱바로 줄인다. */}
-      <header className="bg-ink px-5 py-3 text-fg-inverse">
+    <main className="mx-auto min-h-dvh w-full max-w-[720px] bg-canvas pb-12">
+      <header className="bg-ink px-5 py-4 text-fg-inverse">
         <div className="flex items-center justify-between gap-3">
-          <Link
-            href={`/result?${preferenceToQuery(pref)}`}
-            className="shrink-0 text-[13px] text-[#b8afa6] hover:text-fg-inverse"
-          >
-            ← 추천 목록
+          <Link href="/taste" className="shrink-0 text-[13px] text-[#b8afa6] hover:text-fg-inverse">
+            ← 음식거리 지도
           </Link>
-          <h1 className="font-display truncate text-[16px]">{streetDisplayName(street)}</h1>
+          <h1 className="truncate font-display text-[17px]">{street.name}</h1>
           <span className="shrink-0 rounded-full bg-brand-soft px-2 py-0.5 text-[10px] font-bold text-brand">
-            {street.category}
+            음식특화거리
           </span>
         </div>
       </header>
 
-      <StreetMapPanel baseMarkers={markers} nearby={street.nearby} />
+      <StreetMapPanel baseMarkers={markers} nearby={[]} />
 
-      <section className="px-5 pt-3">
-        {street.coordSource === "주소기반보정" && (
-          <p className="mb-2 text-[11px] text-fg-muted">
-            ※ 원본에 좌표가 없어 주소를 기준으로 보정한 위치입니다.
-          </p>
-        )}
-        {street.lat === null && (
-          <p className="mb-2 text-[11px] text-fg-muted">
-            ※ 좌표가 없어 지도에 위치를 찍지 못했습니다. 아래 주소로 확인해 주세요.
-          </p>
-        )}
-        <p className="text-[13px] text-fg-muted">{street.address}</p>
+      <section className="px-5 pt-5">
+        <p className="text-[12px] font-bold text-brand">
+          {street.sido} {street.sigungu}
+        </p>
+        <h2 className="mt-1 font-display text-[26px] text-fg">{street.name}</h2>
+        <p className="mt-3 text-[14px] leading-relaxed text-fg-muted">
+          {street.description || "지역 대표 음식점이 모여 있는 음식특화거리입니다."}
+        </p>
+        <p className="mt-3 rounded-xl bg-surface-alt px-3 py-2.5 text-[12px] text-fg-muted">
+          📍 {street.address}
+          <br />※ 지도 핀은 특정 점포의 출입구가 아니라 특화거리의 대표 부근을 표시합니다.
+        </p>
       </section>
-
-      <section className="grid grid-cols-3 gap-2 px-5 pt-3">
-        {/* 0은 "점포가 없다"가 아니라 "모른다"이다. 세어 본 적 없는 값을
-            0곳으로 적으면 없는 사실을 만들어 낸다. */}
-        <Stat label="점포" value={street.shopCount > 0 ? `${street.shopCount}곳` : "-"} />
-        <Stat
-          label="길이"
-          value={
-            street.lengthM <= 0
-              ? "-"
-              : street.lengthM >= 1000
-                ? `${(street.lengthM / 1000).toFixed(1)} km`
-                : `${street.lengthM} m`
-          }
-        />
-        <Stat label="지정" value={street.designatedYear ? `${street.designatedYear}년` : "-"} />
-      </section>
-
-      {street.description && (
-        <section className="px-5 pt-4">
-          <p className="rounded-2xl bg-accent-soft px-4 py-3.5 text-[13px] leading-relaxed text-fg">
-            {street.description}
-          </p>
-        </section>
-      )}
 
       {street.foodKeywords.length > 0 && (
-        <section className="px-5 pt-4">
+        <section className="px-5 pt-5">
           <h2 className="text-[13px] font-bold text-fg-muted">대표 먹거리</h2>
           <div className="mt-2 flex flex-wrap gap-1.5">
-            {street.foodKeywords.map((kw) => (
+            {street.foodKeywords.map((keyword) => (
               <span
-                key={kw}
-                className="rounded-full border border-line bg-surface px-2.5 py-1 text-[13px] text-fg"
+                key={keyword}
+                className="rounded-full border border-line bg-surface px-3 py-1.5 text-[13px] text-fg"
               >
-                {kw}
+                {keyword}
               </span>
             ))}
           </div>
         </section>
       )}
 
-      <section className="px-5 pt-6">
-        <h2 className="font-display text-[20px]">여기서 맞을 만한 제철 음식</h2>
-        {related.length === 0 ? (
-          <p className="mt-3 rounded-2xl border border-line bg-surface-alt px-4 py-6 text-center text-[13px] leading-relaxed text-fg-muted">
-            {pref.month}월 기준으로 이 거리와 연결되는 추천 음식이 없습니다.
-            <br />
-            다른 달을 골라 보세요.
+      <section className="px-5 pt-7">
+        <div className="flex items-end justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-bold text-brand">FOOD SHOPS</p>
+            <h2 className="mt-0.5 font-display text-[22px] text-fg">근처 식당 추천</h2>
+          </div>
+          <p className="text-right text-[11px] text-fg-muted">
+            거리 대표 위치 기준
+            <br />가까운 순 우선
+          </p>
+        </div>
+
+        {shops.length === 0 ? (
+          <p className="mt-3 rounded-2xl border border-line bg-surface px-4 py-7 text-center text-[13px] leading-relaxed text-fg-muted">
+            현재 음식 데이터에서 이 거리와 연결되는 등록 식당을 찾지 못했습니다.
           </p>
         ) : (
           <ul className="mt-3 space-y-2.5">
-            {related.slice(0, 6).map((item) => (
-              <li
-                key={item.food.id}
-                className="result-card flex items-center justify-between gap-3 rounded-2xl border border-line bg-surface px-4 py-3"
-              >
-                <div className="min-w-0">
-                  <h3 className="font-display truncate text-[17px]">{item.food.name}</h3>
-                  <p className="mt-0.5 text-[12px] text-fg-muted">
-                    {item.food.ingredient} · 파는 곳 {item.food.restaurantCount}곳
-                  </p>
-                  <div className="mt-1.5">
-                    <TasteBadges food={item.food} compact />
+            {shops.map((shop, index) => (
+              <li key={`${shop.restaurant.id}-${index}`} className="rounded-2xl border border-line bg-surface p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <h3 className="truncate text-[15px] font-bold text-fg">{shop.restaurant.name}</h3>
+                      {shop.restaurant.isLocalSpecialty && (
+                        <span className="shrink-0 rounded-full bg-brand-soft px-2 py-0.5 text-[10px] font-bold text-brand">
+                          지역특화
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1 text-[11px] text-fg-muted">{shop.restaurant.address}</p>
+                    <p className="mt-2 text-[12px] text-fg">
+                      {shop.menus.join(" · ")}
+                    </p>
                   </div>
-                </div>
-                <span className="font-display shrink-0 text-[18px] text-brand">
-                  {item.match}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      {shops.length > 0 && (
-        <section className="px-5 pt-6">
-          <h2 className="font-display text-[20px]">이 근처에서 파는 곳</h2>
-          <ul className="mt-3 divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
-            {shops.slice(0, 8).map((shop, index) => (
-              <li key={`${shop.name}-${index}`} className="flex items-center gap-3 px-4 py-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    <span className="truncate text-[14px] font-medium text-fg">
-                      {shop.name}
+                  {shop.distanceKm !== null && (
+                    <span className="shrink-0 rounded-full border border-line px-2.5 py-1 text-[11px] font-bold text-accent">
+                      {shop.distanceKm < 1
+                        ? `${Math.round(shop.distanceKm * 1000)}m`
+                        : `${shop.distanceKm.toFixed(1)}km`}
                     </span>
-                    {shop.specialty && (
-                      <span className="shrink-0 rounded-full bg-brand-soft px-1.5 py-0.5 text-[10px] font-bold text-brand">
-                        향토
-                      </span>
-                    )}
-                  </div>
-                  <p className="mt-0.5 truncate text-[12px] text-fg-muted">
-                    {shop.food.name}
-                  </p>
+                  )}
                 </div>
                 <a
-                  href={`https://map.kakao.com/link/search/${encodeURIComponent(shop.address || shop.name)}`}
+                  href={`https://map.kakao.com/link/search/${encodeURIComponent(shop.restaurant.address || shop.restaurant.name)}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="shrink-0 text-[12px] text-accent hover:underline"
+                  className="mt-3 block rounded-xl border border-line-strong py-2.5 text-center text-[12px] font-bold text-fg hover:border-brand hover:text-brand"
                 >
-                  길찾기
+                  지도에서 식당 찾기
                 </a>
               </li>
             ))}
           </ul>
-        </section>
-      )}
-
-      <section className="px-5 pt-6">
-        <a
-          href={`https://map.kakao.com/link/search/${mapQuery}`}
-          target="_blank"
-          rel="noreferrer"
-          className="block rounded-2xl bg-ink py-4 text-center text-[16px] font-bold text-fg-inverse"
-        >
-          지도에서 이 거리 열기
-        </a>
+        )}
       </section>
 
-      <footer className="px-6 pt-6 text-[11px] leading-relaxed text-fg-muted">
-        {street.orgName && (
-          <p>
-            관리기관 {street.orgName}
-            {street.orgTel && ` · ${street.orgTel}`}
-          </p>
-        )}
-        {/* 공공데이터에 없어 직접 넣은 거리가 있다. 출처를 싸잡아 적으면
-            공공데이터가 보증하지 않는 항목까지 보증하는 것처럼 읽힌다. */}
-        <p>
-          {street.dataDate
-            ? `공공데이터포털 지역특화거리 ${street.dataDate} 기준`
-            : "공공데이터 지역특화거리 목록에는 없어 직접 추가한 거리입니다. 점포수·길이·지정연도 정보가 없습니다."}
-        </p>
+      <footer className="px-5 pt-7 text-[11px] leading-relaxed text-fg-muted">
+        <p>식당 추천은 현재 프로젝트 음식 데이터에 등록된 식당 중 해당 시·군과 대표 음식이 연결되는 곳을 우선 사용합니다.</p>
       </footer>
     </main>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl border border-line bg-surface py-3 text-center">
-      <div className="text-[10px] font-bold text-fg-muted">{label}</div>
-      <div className="mt-0.5 text-[16px] font-bold text-fg">{value}</div>
-    </div>
   );
 }
